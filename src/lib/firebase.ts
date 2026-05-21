@@ -37,9 +37,16 @@ export const refs = {
 export async function placeOrder(
   order: Omit<Order, 'id' | 'orderNumber'>,
 ): Promise<{ orderId: string; orderNumber: number }> {
-  const counterRef = refs.restaurantCounter(order.restaurantId);
-  const result = await runTransaction(counterRef, (current) => ((current ?? 0) % 999) + 1);
-  const orderNumber = result.snapshot.val() as number;
+  let orderNumber: number;
+  try {
+    const counterRef = refs.restaurantCounter(order.restaurantId);
+    const result = await runTransaction(counterRef, (current) => ((current ?? 0) % 999) + 1);
+    orderNumber = result.snapshot.val() as number;
+  } catch (err) {
+    console.warn('Transaction failed, falling back to timestamp-based order number:', err);
+    // Generate a fallback order number using the current timestamp minutes/seconds + random offset (100 - 999)
+    orderNumber = 100 + (Math.floor(Date.now() / 1000) % 900);
+  }
 
   const orderId = push(refs.orders()).key!;
   const cleanOrder = JSON.parse(JSON.stringify(order));
