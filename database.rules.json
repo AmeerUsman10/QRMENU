@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "restaurants": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "orders": {
+      ".read": true,
+      ".write": true
+    },
+    "restaurant_counters": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
