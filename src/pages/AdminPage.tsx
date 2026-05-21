@@ -7,44 +7,105 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
-  signInWithEmailAndPassword, signOut, onAuthStateChanged
+  signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword
 } from 'firebase/auth';
-import { onValue, set, update, push } from 'firebase/database';
+import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
 import { auth, refs } from '../lib/firebase';
 import type { Restaurant, MenuItem, Order } from '../types';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
 
 function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const [isRegister, setIsRegister] = useState(false);
+  const [restaurantName, setRestaurantName] = useState('');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
+  const [tables, setTables] = useState('6');
+  const [kitchenPin, setKitchenPin] = useState('');
+
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true); setError('');
     try {
-      await signInWithEmailAndPassword(auth, email, pass);
-      onLogin();
-    } catch {
-      setError('Invalid email or password');
+      if (isRegister) {
+        // Validate inputs
+        if (!restaurantName.trim() || !kitchenPin.trim() || !tables.trim()) {
+          throw new Error('All fields are required');
+        }
+        if (kitchenPin.trim().length !== 4 || isNaN(Number(kitchenPin.trim()))) {
+          throw new Error('Kitchen PIN must be exactly 4 digits');
+        }
+
+        // 1. Create Firebase Auth user
+        await createUserWithEmailAndPassword(auth, email, pass);
+
+        // 2. Generate a unique search-friendly ID slug from the restaurant name
+        const cleanSlug = restaurantName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/(^-|-$)/g, '');
+        const baseId = cleanSlug || 'restaurant';
+
+        // Check if restaurant ID is already taken; if so, append random suffix
+        let finalId = baseId;
+        const existsSnap = await get(refs.restaurant(finalId));
+        if (existsSnap.exists()) {
+          const rand = Math.random().toString(36).substring(2, 6);
+          finalId = `${baseId}-${rand}`;
+        }
+
+        // 3. Provision new restaurant database entry
+        await set(refs.restaurant(finalId), {
+          name: restaurantName.trim(),
+          adminEmail: email.trim(),
+          kitchenPin: kitchenPin.trim(),
+          tables: parseInt(tables, 10) || 6,
+          categories: ['Signature Pizzas', 'Beverages'],
+          menu: {}
+        });
+
+        onLogin();
+      } else {
+        await signInWithEmailAndPassword(auth, email, pass);
+        onLogin();
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Invalid email or password');
     }
     setLoading(false);
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-sm bg-white rounded-3xl shadow-lg p-8">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-12">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-lg p-8">
         <div className="text-center mb-8">
           <div className="w-14 h-14 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
             <UtensilsCrossed size={28} className="text-orange-500" />
           </div>
-          <h1 className="text-xl font-bold text-gray-900">Restaurant Admin</h1>
-          <p className="text-gray-400 text-sm mt-1">Sign in to manage your menu</p>
+          <h1 className="text-xl font-bold text-gray-900">
+            {isRegister ? 'Register Restaurant' : 'Restaurant Admin'}
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">
+            {isRegister ? 'Set up your platform in under a minute' : 'Sign in to manage your menu'}
+          </p>
         </div>
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {isRegister && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Restaurant Name</label>
+              <input
+                type="text" required value={restaurantName}
+                onChange={(e) => setRestaurantName(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400 transition-colors"
+                placeholder="e.g. Jejmo Bistro"
+              />
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
@@ -67,12 +128,47 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
               {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
+          {isRegister && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Number of Tables</label>
+                <input
+                  type="number" required min={1} max={100} value={tables}
+                  onChange={(e) => setTables(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400 transition-colors"
+                  placeholder="6"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">4-Digit Kitchen PIN</label>
+                <input
+                  type="password" required maxLength={4} pattern="[0-9]{4}" value={kitchenPin}
+                  onChange={(e) => setKitchenPin(e.target.value.replace(/\D/g, ''))}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400 transition-colors"
+                  placeholder="1234"
+                />
+              </div>
+            </div>
+          )}
           {error && <p className="text-red-500 text-sm">{error}</p>}
           <button type="submit" disabled={loading}
             className="w-full bg-orange-500 text-white font-semibold py-3 rounded-xl disabled:opacity-50">
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading ? 'Processing...' : isRegister ? 'Register & Set Up' : 'Sign in'}
           </button>
         </form>
+
+        <div className="text-center mt-6">
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegister(!isRegister);
+              setError('');
+            }}
+            className="text-orange-500 font-semibold text-sm hover:underline"
+          >
+            {isRegister ? 'Already have an account? Sign in' : "Don't have a restaurant? Register one"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -87,16 +183,25 @@ function useRestaurantForUser(): [Restaurant | null, boolean] {
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) { setLoading(false); return; }
-    const unsub = onValue(refs.restaurants(), (snap) => {
-      if (!snap.exists()) { setLoading(false); return; }
-      snap.forEach((child) => {
-        const r = child.val() as Omit<Restaurant, 'id'>;
-        if (r.adminEmail === user.email) {
+    
+    // Query the specific restaurant where adminEmail equals the logged-in user's email
+    const q = query(refs.restaurants(), orderByChild('adminEmail'), equalTo(user.email));
+    
+    const unsub = onValue(q, (snap) => {
+      if (snap.exists()) {
+        snap.forEach((child) => {
+          const r = child.val() as Omit<Restaurant, 'id'>;
           setRestaurant({ id: child.key!, ...r });
-        }
-      });
+        });
+      } else {
+        setRestaurant(null);
+      }
+      setLoading(false);
+    }, (err) => {
+      console.error("Firebase query permission error:", err);
       setLoading(false);
     });
+
     return () => unsub();
   }, []);
 
@@ -523,6 +628,9 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
     logo: restaurant.logo ?? '',
     tables: String(restaurant.tables ?? 1),
     kitchenPin: restaurant.kitchenPin ?? '',
+    stripeSecretKey: restaurant.stripeSecretKey ?? '',
+    stripePublishableKey: restaurant.stripePublishableKey ?? '',
+    stripeWebhookSecret: restaurant.stripeWebhookSecret ?? '',
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -534,6 +642,9 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
       logo: form.logo.trim(),
       tables: parseInt(form.tables, 10),
       kitchenPin: form.kitchenPin.trim(),
+      stripeSecretKey: form.stripeSecretKey.trim() || null,
+      stripePublishableKey: form.stripePublishableKey.trim() || null,
+      stripeWebhookSecret: form.stripeWebhookSecret.trim() || null,
     });
     setSaving(false);
     setSaved(true);
@@ -547,10 +658,19 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
     { label: 'Kitchen PIN', key: 'kitchenPin', placeholder: '4-digit PIN', type: 'password' },
   ];
 
+  const stripeFields = [
+    { label: 'Stripe Publishable Key (Optional)', key: 'stripePublishableKey', placeholder: 'pk_live_...' },
+    { label: 'Stripe Secret Key (Optional)', key: 'stripeSecretKey', placeholder: 'sk_live_...', type: 'password' },
+    { label: 'Stripe Webhook Secret (Optional)', key: 'stripeWebhookSecret', placeholder: 'whsec_...', type: 'password' },
+  ];
+
   return (
     <div>
       <h2 className="text-xl font-bold text-gray-900 mb-5">Settings</h2>
-      <div className="bg-white rounded-2xl p-5 shadow-sm">
+      
+      {/* General Settings */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
+        <h3 className="font-semibold text-gray-800 mb-4">General Settings</h3>
         <div className="space-y-4">
           {fields.map((f) => (
             <div key={f.key}>
@@ -565,10 +685,55 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Stripe Settings */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
+        <h3 className="font-semibold text-gray-800 mb-1">Direct Stripe Payments (Optional)</h3>
+        <p className="text-xs text-gray-400 mb-4">
+          Configure your own custom Stripe credentials to receive card payments directly. Leave blank to process transactions using the platform's default account.
+        </p>
+        <div className="space-y-4">
+          {stripeFields.map((f) => (
+            <div key={f.key}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+              <input
+                type={f.type ?? 'text'}
+                value={(form as any)[f.key]}
+                onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                placeholder={f.placeholder}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400"
+              />
+            </div>
+          ))}
+        </div>
+
+        {form.stripeWebhookSecret.trim() && (
+          <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 mt-4">
+            <h4 className="text-xs font-bold text-orange-700 mb-1">Your Custom Stripe Webhook Endpoint</h4>
+            <p className="text-xs text-orange-800 mb-2 leading-relaxed">
+              Register this webhook in your Stripe merchant dashboard to listen for completed checkout events:
+            </p>
+            <div className="bg-white border border-orange-200 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+              <p className="text-[10px] text-gray-600 font-mono truncate select-all">
+                https://us-central1-qr-menu-9a48b.cloudfunctions.net/stripeWebhook?r={restaurant.id}
+              </p>
+              <button
+                onClick={() => navigator.clipboard.writeText(`https://us-central1-qr-menu-9a48b.cloudfunctions.net/stripeWebhook?r=${restaurant.id}`)}
+                className="text-xs text-orange-600 font-bold flex-shrink-0"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
         <button
           onClick={save}
           disabled={saving}
-          className="w-full mt-5 bg-orange-500 text-white font-semibold py-3 rounded-xl disabled:opacity-50"
+          className="w-full bg-orange-500 text-white font-semibold py-3.5 rounded-xl disabled:opacity-50"
         >
           {saved ? '✓ Saved!' : saving ? 'Saving...' : 'Save changes'}
         </button>

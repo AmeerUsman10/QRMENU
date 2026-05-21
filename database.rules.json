@@ -1,16 +1,25 @@
 {
   "rules": {
     "restaurants": {
-      ".read": true,
-      ".write": "auth != null"
+      ".read": "auth != null && query.orderByChild == 'adminEmail' && query.equalTo == auth.token.email",
+      ".indexOn": ["adminEmail"],
+      "$restaurantId": {
+        ".read": true,
+        ".write": "auth != null && (!data.exists() || data.child('adminEmail').val() == auth.token.email || newData.child('adminEmail').val() == auth.token.email)"
+      }
     },
     "orders": {
       ".read": true,
-      ".write": true
+      ".indexOn": ["restaurantId"],
+      "$orderId": {
+        ".write": "!data.exists() || (data.exists() && (auth != null || (newData.child('totalPrice').val() == data.child('totalPrice').val() && newData.child('items').val() == data.child('items').val() && newData.child('restaurantId').val() == data.child('restaurantId').val() && newData.child('customerName').val() == data.child('customerName').val())))"
+      }
     },
     "restaurant_counters": {
-      ".read": true,
-      ".write": true
+      "$restaurantId": {
+        ".read": true,
+        ".write": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 1000"
+      }
     }
   }
 }

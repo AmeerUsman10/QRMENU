@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onValue, get } from 'firebase/database';
 import { refs, updateOrderStatus } from '../lib/firebase';
 import type { Order, OrderStatus, Restaurant } from '../types';
+import { useSearchParams } from 'react-router-dom';
 
 const MASTER_PIN = '0000';
 
@@ -131,10 +132,11 @@ function OrderCard({ order, onStatusChange }: OrderCardProps) {
 // ─── PIN Entry ────────────────────────────────────────────────────────────────
 
 interface PinEntryProps {
+  restaurantId: string | null;
   onSuccess: (restaurantId: string | null, restaurantName: string) => void;
 }
 
-function PinEntry({ onSuccess }: PinEntryProps) {
+function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -145,19 +147,38 @@ function PinEntry({ onSuccess }: PinEntryProps) {
       return;
     }
     setChecking(true);
-    const snap = await get(refs.restaurants());
-    if (snap.exists()) {
-      let found = false;
-      snap.forEach((child) => {
-        const r = child.val() as Restaurant;
-        if (r.kitchenPin === pin) {
-          onSuccess(child.key!, r.name);
-          found = true;
+    try {
+      if (restaurantId) {
+        const snap = await get(refs.restaurant(restaurantId));
+        if (snap.exists()) {
+          const r = snap.val() as Restaurant;
+          if (r.kitchenPin === pin) {
+            onSuccess(restaurantId, r.name);
+          } else {
+            setError('Incorrect PIN');
+          }
+        } else {
+          setError('Restaurant not found');
         }
-      });
-      if (!found) setError('Incorrect PIN');
-    } else {
-      setError('No restaurants found');
+      } else {
+        const snap = await get(refs.restaurants());
+        if (snap.exists()) {
+          let found = false;
+          snap.forEach((child) => {
+            const r = child.val() as Restaurant;
+            if (r.kitchenPin === pin) {
+              onSuccess(child.key!, r.name);
+              found = true;
+            }
+          });
+          if (!found) setError('Incorrect PIN');
+        } else {
+          setError('No restaurants found');
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Permission error. Try specifying restaurant ID in URL (e.g. ?r=restaurant_id).');
     }
     setChecking(false);
   }
@@ -193,6 +214,9 @@ function PinEntry({ onSuccess }: PinEntryProps) {
 // ─── Main KitchenPage ─────────────────────────────────────────────────────────
 
 export default function KitchenPage() {
+  const [searchParams] = useSearchParams();
+  const restaurantId = searchParams.get('r');
+
   const [auth, setAuth] = useState<{ restaurantId: string | null; name: string } | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [history, setHistory] = useState<Order[]>([]);
@@ -208,8 +232,11 @@ export default function KitchenPage() {
       const done: Order[] = [];
       snap.forEach((c) => {
         const o = { ...c.val(), id: c.key! } as Order;
-        if (['new', 'preparing', 'ready'].includes(o.status)) active.push(o);
-        else done.push(o);
+        const isPaid = o.paymentType === 'cash' || o.paymentStatus === 'paid';
+        if (isPaid) {
+          if (['new', 'preparing', 'ready'].includes(o.status)) active.push(o);
+          else done.push(o);
+        }
       });
       active.sort((a, b) => a.timestamp - b.timestamp);
       done.sort((a, b) => b.timestamp - a.timestamp);
@@ -227,7 +254,7 @@ export default function KitchenPage() {
   }, [auth]);
 
   if (!auth) {
-    return <PinEntry onSuccess={(id, name) => setAuth({ restaurantId: id, name })} />;
+    return <PinEntry restaurantId={restaurantId} onSuccess={(id, name) => setAuth({ restaurantId: id, name })} />;
   }
 
   const newOrders = orders.filter((o) => o.status === 'new');

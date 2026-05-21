@@ -7,24 +7,39 @@ const db = admin.database();
 
 // Set STRIPE_SECRET_KEY in Firebase config:
 //   firebase functions:config:set stripe.secret="sk_live_..."
-const stripe = new Stripe(functions.config().stripe?.secret ?? process.env.STRIPE_SECRET_KEY ?? '', {
-  apiVersion: '2024-04-10',
-});
 
 // POST /createCheckoutSession
-// Body: { restaurantId, orderId (pre-created), items, tableNumber, successUrl, cancelUrl }
+// Body: { restaurantId, orderId, items, tableNumber, successUrl, cancelUrl }
 export const createCheckoutSession = functions.https.onCall(async (data) => {
-  const { restaurantId, items, tableNumber, successUrl, cancelUrl } = data as {
+  const { restaurantId, orderId, items, tableNumber, successUrl, cancelUrl } = data as {
     restaurantId: string;
+    orderId: string;
     items: Array<{ name: string; price: number; quantity: number }>;
     tableNumber: number | null;
     successUrl: string;
     cancelUrl: string;
   };
 
-  if (!restaurantId || !items?.length) {
+  if (!restaurantId || !orderId || !items?.length) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');
   }
+
+  // Load restaurant settings to see if they configured a custom Stripe key
+  const restaurantSnap = await db.ref(`restaurants/${restaurantId}`).get();
+  if (!restaurantSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', 'Restaurant not found');
+  }
+  const restaurant = restaurantSnap.val();
+
+  // Dynamically load the secret key, falling back to the global environment configuration
+  const secretKey = restaurant.stripeSecretKey || functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY || '';
+  if (!secretKey) {
+    throw new functions.https.HttpsError('failed-precondition', 'Stripe secret key not configured on platform or restaurant');
+  }
+
+  const activeStripe = new Stripe(secretKey, {
+    apiVersion: '2024-06-20',
+  });
 
   const lineItems = items.map((item) => ({
     price_data: {
@@ -38,12 +53,13 @@ export const createCheckoutSession = functions.https.onCall(async (data) => {
     quantity: item.quantity,
   }));
 
-  const session = await stripe.checkout.sessions.create({
+  const session = await activeStripe.checkout.sessions.create({
     payment_method_types: ['card'],
     line_items: lineItems,
     mode: 'payment',
     success_url: successUrl,
     cancel_url: cancelUrl,
+    client_reference_id: orderId,
     metadata: { restaurantId, tableNumber: String(tableNumber) },
     payment_intent_data: {
       metadata: { restaurantId, tableNumber: String(tableNumber) },
@@ -56,11 +72,38 @@ export const createCheckoutSession = functions.https.onCall(async (data) => {
 // Stripe webhook — confirms payment and updates order status
 export const stripeWebhook = functions.https.onRequest(async (req, res) => {
   const sig = req.headers['stripe-signature'] as string;
-  const webhookSecret = functions.config().stripe?.webhook_secret ?? process.env.STRIPE_WEBHOOK_SECRET ?? '';
+  const restaurantId = req.query.r as string | undefined;
+
+  let secretKey = functions.config().stripe?.secret ?? process.env.STRIPE_SECRET_KEY ?? '';
+  let webhookSecret = functions.config().stripe?.webhook_secret ?? process.env.STRIPE_WEBHOOK_SECRET ?? '';
+
+  if (restaurantId) {
+    try {
+      const restaurantSnap = await db.ref(`restaurants/${restaurantId}`).get();
+      if (restaurantSnap.exists()) {
+        const restaurant = restaurantSnap.val();
+        if (restaurant.stripeSecretKey && restaurant.stripeWebhookSecret) {
+          secretKey = restaurant.stripeSecretKey;
+          webhookSecret = restaurant.stripeWebhookSecret;
+        }
+      }
+    } catch (err) {
+      console.error(`Error loading restaurant keys for ID ${restaurantId}:`, err);
+    }
+  }
+
+  if (!secretKey || !webhookSecret) {
+    res.status(400).send('Webhook Error: Stripe credentials are not configured');
+    return;
+  }
+
+  const activeStripe = new Stripe(secretKey, {
+    apiVersion: '2024-06-20',
+  });
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+    event = activeStripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
   } catch (err) {
     res.status(400).send(`Webhook Error: ${(err as Error).message}`);
     return;

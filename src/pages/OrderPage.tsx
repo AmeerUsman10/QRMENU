@@ -193,6 +193,7 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced }: CartShee
         const cancelUrl = `${window.location.origin}/order?r=${restaurant.id}${tableNumber != null ? `&t=${tableNumber}` : ''}`;
         const { url } = await createCheckoutSession({
           restaurantId: restaurant.id,
+          orderId,
           items: items.map((i) => ({ name: i.name, price: i.price, quantity: i.quantity })),
           tableNumber,
           successUrl,
@@ -206,7 +207,8 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced }: CartShee
       const { orderId, orderNumber } = await placeOrder(orderPayload);
       clearCart();
       onOrderPlaced(orderId, orderNumber);
-    } catch {
+    } catch (err) {
+      console.error('Order placement error:', err);
       setFormError('Failed to place order. Please try again.');
       setPlacing(false);
     }

@@ -3,6 +3,7 @@ import { firebaseFunctions } from './firebase';
 
 interface CheckoutSessionArgs {
   restaurantId: string;
+  orderId: string;
   items: Array<{ name: string; price: number; quantity: number }>;
   tableNumber: number | null;
   successUrl: string;

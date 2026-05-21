@@ -38,6 +38,9 @@ export interface Restaurant {
   adminEmail: string;
   categories: string[];
   menu: Record<string, Omit<MenuItem, 'id'>>;
+  stripeSecretKey?: string;
+  stripePublishableKey?: string;
+  stripeWebhookSecret?: string;
 }
 
 export interface CartItem {

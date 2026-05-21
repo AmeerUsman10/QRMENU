@@ -12,7 +12,8 @@ export default function App() {
         <Route path="/order/success" element={<OrderSuccessPage />} />
         <Route path="/kitchen" element={<KitchenPage />} />
         <Route path="/admin/*" element={<AdminPage />} />
-        <Route path="*" element={<Navigate to="/order" replace />} />
+        <Route path="/" element={<Navigate to="/admin" replace />} />
+        <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </BrowserRouter>
   );

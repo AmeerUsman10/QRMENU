@@ -42,7 +42,8 @@ export async function placeOrder(
   const orderNumber = result.snapshot.val() as number;
 
   const orderId = push(refs.orders()).key!;
-  await set(ref(db, `orders/${orderId}`), { ...order, id: orderId, orderNumber });
+  const cleanOrder = JSON.parse(JSON.stringify(order));
+  await set(ref(db, `orders/${orderId}`), { ...cleanOrder, id: orderId, orderNumber });
   return { orderId, orderNumber };
 }
 
