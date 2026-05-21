@@ -160,7 +160,7 @@ interface CartSheetProps {
   onOrderPlaced: (orderId: string, orderNum: number) => void;
 }
 
-function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced }: CartSheetProps) {
+function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPlaced }: CartSheetProps) {
   const { items, changeQty, clearCart, total, totalFormatted, itemsReadable } = useCartStore();
   const [step, setStep] = useState<'cart' | 'checkout'>('cart');
   const [form, setForm] = useState<CheckoutData>({ name: '', phone: '', note: '', payment: 'cash' });
@@ -204,9 +204,9 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced }: CartShee
         return;
       }
 
-      const { orderId, orderNumber } = await placeOrder(orderPayload);
+      const { orderId } = await placeOrder(orderPayload);
       clearCart();
-      onOrderPlaced(orderId, orderNumber);
+      window.location.href = `${window.location.origin}/order/success?order_id=${orderId}`;
     } catch (err) {
       console.error('Order placement error:', err);
       setFormError('Failed to place order. Please try again.');
