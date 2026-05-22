@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, ChefHat, Clock, BellRing, XCircle, Sparkles } from 'lucide-react';
 import { refs, updateOrderStatus, onValue } from '../lib/firebase';
+import { OrderSuccessSkeleton } from '../components/Skeleton';
 import type { Order, CartItem } from '../types';
 
 export default function OrderSuccessPage() {
@@ -42,11 +43,7 @@ export default function OrderSuccessPage() {
     </div>
   );
 
-  if (!order) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
+  if (!order) return <OrderSuccessSkeleton />;
 
   const statusConfig = {
     new: {
