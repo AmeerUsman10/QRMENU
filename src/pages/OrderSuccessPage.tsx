@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, ChefHat, Clock, BellRing, XCircle, Sparkles } from 'lucide-react';
 import { refs, updateOrderStatus, onValue } from '../lib/firebase';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Order, CartItem } from '../types';
 
 export default function OrderSuccessPage() {
@@ -12,6 +13,14 @@ export default function OrderSuccessPage() {
 
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState('');
+
+  useDocumentTitle(
+    error
+      ? 'Order not found'
+      : order
+        ? `Order #${String(order.orderNumber).padStart(3, '0')} · ${order.status}`
+        : 'Order status',
+  );
 
   useEffect(() => {
     if (!orderId) { setError('No order found.'); return; }

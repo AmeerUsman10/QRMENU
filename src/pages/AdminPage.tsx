@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, UtensilsCrossed, QrCode, Settings, LogOut,
@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
 import { auth, refs } from '../lib/firebase';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Restaurant, MenuItem, Order } from '../types';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
@@ -838,6 +839,18 @@ const NAV = [
 
 function AdminShell() {
   const [restaurant, loading] = useRestaurantForUser();
+  const location = useLocation();
+
+  // Map the sub-route under /admin to a human-readable section label.
+  const SECTION_TITLES: Record<string, string> = {
+    '/admin': 'Dashboard',
+    '/admin/menu': 'Menu',
+    '/admin/orders': 'Orders',
+    '/admin/qr': 'QR Codes',
+    '/admin/settings': 'Settings',
+  };
+  const section = SECTION_TITLES[location.pathname] ?? 'Admin';
+  useDocumentTitle(restaurant ? `${section} · ${restaurant.name}` : section);
 
   async function handleLogout() {
     await signOut(auth);
