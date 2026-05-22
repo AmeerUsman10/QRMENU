@@ -12,7 +12,7 @@
       ".read": true,
       ".indexOn": ["restaurantId"],
       "$orderId": {
-        ".write": "!data.exists() || (data.exists() && (auth != null || (newData.child('totalPrice').val() == data.child('totalPrice').val() && newData.child('items').val() == data.child('items').val() && newData.child('restaurantId').val() == data.child('restaurantId').val() && newData.child('customerName').val() == data.child('customerName').val())))"
+        ".write": "!data.exists() || auth != null || (data.exists() && newData.child('totalPrice').val() == data.child('totalPrice').val() && newData.child('items').val() == data.child('items').val() && newData.child('restaurantId').val() == data.child('restaurantId').val() && newData.child('customerName').val() == data.child('customerName').val() && newData.child('timestamp').val() == data.child('timestamp').val() && newData.child('orderNumber').val() == data.child('orderNumber').val() && newData.child('paymentType').val() == data.child('paymentType').val() && newData.child('paymentStatus').val() == data.child('paymentStatus').val() && newData.child('id').val() == data.child('id').val() && newData.child('tableNumber').val() == data.child('tableNumber').val() && newData.child('note').val() == data.child('note').val() && (newData.child('status').val() == 'new' || newData.child('status').val() == 'preparing' || newData.child('status').val() == 'ready' || newData.child('status').val() == 'done' || newData.child('status').val() == 'cancelled'))"
       }
     },
     "restaurant_counters": {
