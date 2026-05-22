@@ -1,0 +1,67 @@
+# AI Development Rules & Scaffolding Guidelines (.cursorrules)
+
+You are an expert AI software engineer pair-programming with the user on this QR Menu & Real-Time Tracking application. Follow these rules and practices during all development sessions to ensure high-performance, resilient, and visually stunning implementations.
+
+---
+
+## 🛠️ Tech Stack & Architecture
+
+- **Frontend Framework:** React 18+ (TypeScript, Vite, HMR)
+- **Styling:** Tailwind CSS (utility classes), Lucide React (icons)
+- **Database & Hosting:** Firebase Suite
+  - **Firebase Realtime Database:** For reactive state synchronization (e.g., active orders, kitchen states).
+  - **Firebase Hosting:** Production deployment target.
+  - **Stripe SDK:** Custom domain checkout & credit card payments.
+
+---
+
+## 📦 Directory Structure & Code Layout
+
+Maintain a clean separation of concerns:
+- `src/components/`: Reusable components (e.g., UI sheets, product cards, dynamic step widgets).
+- `src/lib/`: Firebase client initialization, helpers, and integration modules.
+- `src/pages/`: Main views/routes (e.g., `/order` for customer menus, `/kitchen` for dashboard, `/order/success` for tracking).
+- `src/types/`: Centralized TypeScript interfaces/types for orders, products, and configurations.
+- `database.rules.json`: Security rules for Firebase Realtime Database. Always ensure synchronization after rule edits.
+
+---
+
+## 🔒 Security & Environment Safety
+
+- **Zero API Key Leakage:** Never commit raw API keys, private credentials, or secrets to the git repository.
+- **Local Credentials:** All secrets must live strictly inside the local `.env` file (which is ignored by `.gitignore`).
+- **Database Security Rules:** Maintain robust read/write access constraints in `database.rules.json` to allow public customers to place orders securely while restricting administrative/kitchen actions.
+
+---
+
+## 🚀 Coding Standards & React Best Practices
+
+### 1. TypeScript Strictness
+- **Compile-Ready:** Every single line of code must compile without errors. Run `npm run build` locally to verify before proposing a deploy.
+- **Strict Typing:** Avoid `any` or loose type definitions. Use defined types from `src/types` or local interfaces.
+
+### 2. State & Firebase Connection Lifecycles
+- **Subscription Teardown:** When creating Firebase Realtime Database connections (e.g., `onValue()`), always return the unsubscribe function in the `useEffect` cleanup block to prevent memory leaks and redundant listeners.
+- **Resilient Transactions:** Always wrap Firebase sequential counters / transactional writes (`runTransaction`) in `try-catch` blocks.
+- **Safari iOS Compatibility:** WebKit based browsers (like iOS Safari in Private Browsing / cellular data) frequently block WebSockets, forcing HTTP Long Polling. Always have a resilient non-transactional fallback (like a direct `set()` using seconds-timestamp or random string mapping) if the client transaction fails or times out.
+
+### 3. Aesthetics & User Experience
+- **Tactile UI:** Build micro-interactions, smooth hover transitions (`transition-all duration-300 hover:scale-105`), and elegant animations (like pulsing lights, bouncing chef hats, and spinning loading spinners).
+- **Curated Colors:** Avoid plain solid primary colors. UseTailwind's slate/zinc backgrounds, warm/amber warnings, and vibrant emerald successes to give the application a premium feel.
+- **Responsiveness:** Optimize layouts for mobile viewports (`max-w-md mx-auto` or mobile-first flexboxes) since customers use this app on mobile browsers at physical tables.
+
+---
+
+## 🔍 Validation & Deployment Workflow
+
+1. **Local Build Check:** Proactively execute `npm run build` to confirm there are zero TypeScript or bundle compiling errors.
+2. **Format and Lint:** Keep files clean, removing dead code, debug console logs, and unused imports.
+3. **Database Rules Deploy:** If modifications are made to security rules, run `firebase deploy --only database`.
+4. **Hosting Deploy:** Run `firebase deploy --only hosting` to publish live updates.
+
+---
+
+## 📚 Key Reference Files
+
+- [handoff_doc.md](file:///d:/QR_TABLE/handoff_doc.md): System architecture diagrams, solved Safari bugs, and active testing history.
+- `database.rules.json`: Current security configuration for Realtime Database.
