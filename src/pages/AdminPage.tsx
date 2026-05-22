@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
 import { auth, refs } from '../lib/firebase';
+import { useFocusTrap } from '../lib/useFocusTrap';
 import type { Restaurant, MenuItem, Order } from '../types';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
@@ -293,6 +294,8 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
   const [activeCategory, setActiveCategory] = useState<string>(restaurant.categories?.[0] ?? '');
   const [newCategory, setNewCategory] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
+  const editSheetRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(editSheetRef, { onClose: () => setEditItem(null) });
 
   const items: MenuItem[] = Object.entries(restaurant.menu ?? {}).map(([id, item]) => ({
     ...item, id,
@@ -442,14 +445,18 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
             onClick={() => setEditItem(null)}
           >
             <motion.div
+              ref={editSheetRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="edit-item-title"
               className="bg-white rounded-t-3xl p-5 max-h-[90vh] overflow-y-auto"
               initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 260 }}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-5">
-                <h3 className="font-bold text-lg text-gray-900">{editItem.id ? 'Edit item' : 'New item'}</h3>
-                <button onClick={() => setEditItem(null)}><X size={20} className="text-gray-400" /></button>
+                <h3 id="edit-item-title" className="font-bold text-lg text-gray-900">{editItem.id ? 'Edit item' : 'New item'}</h3>
+                <button onClick={() => setEditItem(null)} aria-label="Close edit panel"><X size={20} className="text-gray-400" /></button>
               </div>
               <div className="space-y-4">
                 {[

@@ -6,6 +6,7 @@ import { onValue } from 'firebase/database';
 import { refs, placeOrder } from '../lib/firebase';
 import { createCheckoutSession } from '../lib/stripe';
 import { useCartStore } from '../store/cartStore';
+import { useFocusTrap } from '../lib/useFocusTrap';
 import type { Restaurant, MenuItem, CartItem } from '../types';
 
 // ─── Utility ────────────────────────────────────────────────────────────────
@@ -31,6 +32,8 @@ function ModifierSheet({ item, onClose, onAdd }: ModifierSheetProps) {
 
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [error, setError] = useState('');
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(sheetRef, { onClose });
 
   function toggle(groupId: string, optId: string, max: number) {
     setSelections((prev) => {
@@ -91,6 +94,10 @@ function ModifierSheet({ item, onClose, onAdd }: ModifierSheetProps) {
       onClick={onClose}
     >
       <motion.div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modifier-sheet-title"
         className="bg-white rounded-t-3xl p-5 max-h-[85vh] overflow-y-auto"
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 260 }}
@@ -99,7 +106,7 @@ function ModifierSheet({ item, onClose, onAdd }: ModifierSheetProps) {
         {item.image && (
           <img src={item.image} alt={item.name} className="w-full h-44 object-cover rounded-2xl mb-4" />
         )}
-        <h2 className="text-xl font-bold text-gray-900 mb-1">{item.name}</h2>
+        <h2 id="modifier-sheet-title" className="text-xl font-bold text-gray-900 mb-1">{item.name}</h2>
         {item.description && <p className="text-gray-500 text-sm mb-4">{item.description}</p>}
 
         {groups.map((g) => (
@@ -166,6 +173,8 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPl
   const [form, setForm] = useState<CheckoutData>({ name: '', phone: '', note: '', payment: 'cash' });
   const [placing, setPlacing] = useState(false);
   const [formError, setFormError] = useState('');
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(sheetRef, { onClose });
 
   async function handlePlace() {
     if (!form.name.trim()) { setFormError('Please enter your name'); return; }
@@ -221,6 +230,10 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPl
       onClick={onClose}
     >
       <motion.div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cart-sheet-title"
         className="bg-white rounded-t-3xl max-h-[90vh] flex flex-col"
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 260 }}
@@ -228,7 +241,7 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPl
       >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">
+          <h2 id="cart-sheet-title" className="text-lg font-bold text-gray-900">
             {step === 'cart' ? 'Your order' : 'Checkout'}
             {tableNumber != null && <span className="ml-2 text-sm font-normal text-gray-400">Table {tableNumber}</span>}
           </h2>
