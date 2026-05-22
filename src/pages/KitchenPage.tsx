@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onValue, get } from 'firebase/database';
 import { refs, updateOrderStatus } from '../lib/firebase';
+import { playNewOrderAlert, primeAudioContext, isMuted as readMuted, setMuted as writeMuted } from '../lib/kitchenAlert';
 import type { Order, OrderStatus, Restaurant } from '../types';
 import { useSearchParams } from 'react-router-dom';
 
@@ -142,6 +143,11 @@ function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
   const [checking, setChecking] = useState(false);
 
   async function check() {
+    // Prime the AudioContext while we are still in a user-gesture chain
+    // (PIN submit). Otherwise the browser may suspend the context and the
+    // very first new-order alert would be inaudible.
+    void primeAudioContext();
+
     if (pin === MASTER_PIN) {
       onSuccess(null, 'All restaurants');
       return;
@@ -221,8 +227,16 @@ export default function KitchenPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [history, setHistory] = useState<Order[]>([]);
   const [tab, setTab] = useState<'active' | 'history'>('active');
+  const [muted, setMuted] = useState<boolean>(() => readMuted());
   const prevNewCount = useRef(0);
-  const bellRef = useRef<HTMLAudioElement | null>(null);
+
+  function toggleMute() {
+    setMuted((prev) => {
+      const next = !prev;
+      writeMuted(next);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!auth) return;
@@ -243,7 +257,9 @@ export default function KitchenPage() {
 
       const newCount = active.filter((o) => o.status === 'new').length;
       if (newCount > prevNewCount.current) {
-        bellRef.current?.play().catch(() => {});
+        // Fire-and-forget. The helper handles mute, browser autoplay
+        // suspension, and unsupported environments internally.
+        void playNewOrderAlert();
       }
       prevNewCount.current = newCount;
 
@@ -263,9 +279,6 @@ export default function KitchenPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Preload bell sound (silent fallback) */}
-      <audio ref={bellRef} src="/bell.mp3" preload="auto" />
-
       {/* Header */}
       <div className="bg-gray-900 text-white px-4 py-4 flex items-center justify-between">
         <div>
@@ -278,6 +291,19 @@ export default function KitchenPage() {
               {orders.length} active
             </div>
           )}
+          <button
+            onClick={toggleMute}
+            aria-pressed={muted}
+            aria-label={muted ? 'Unmute new-order alerts' : 'Mute new-order alerts'}
+            title={muted ? 'Alerts muted — tap to unmute' : 'Alerts on — tap to mute'}
+            className={`text-lg w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
+              muted
+                ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
+            }`}
+          >
+            {muted ? '🔇' : '🔔'}
+          </button>
           <button
             onClick={() => setAuth(null)}
             className="text-gray-400 text-xs px-3 py-2 rounded-lg hover:bg-gray-800"
