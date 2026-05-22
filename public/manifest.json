@@ -2,7 +2,6 @@
   "name": "QRMENU",
   "short_name": "QRMENU",
   "description": "QR-based table ordering for restaurants. Customers scan, browse, order, and track in real time. Kitchen staff manage live orders.",
-  "start_url": "/admin",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
