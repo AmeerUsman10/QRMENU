@@ -3,7 +3,8 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, UtensilsCrossed, QrCode, Settings, LogOut,
-  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package
+  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package,
+  ArrowUpRight, ArrowDownRight, Minus as MinusIcon, Receipt, Wallet, ShoppingBag,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -11,6 +12,7 @@ import {
 } from 'firebase/auth';
 import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
 import { auth, refs } from '../lib/firebase';
+import { Sparkline } from '../components/Sparkline';
 import type { Restaurant, MenuItem, Order } from '../types';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
@@ -216,8 +218,106 @@ function today() {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
+type Range = '1d' | '7d' | '30d';
+
+const RANGE_DAYS: Record<Range, number> = { '1d': 1, '7d': 7, '30d': 30 };
+const RANGE_LABELS: Record<Range, string> = { '1d': 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+
+function startOfDayMs(ts: number): number {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+const ONE_DAY_MS = 86_400_000;
+
+/**
+ * Compute a daily series of `valueFn(order)` totals over the last `days` days,
+ * oldest first. Cancelled orders are excluded.
+ */
+function dailySeries(orders: Order[], days: number, valueFn: (o: Order) => number): number[] {
+  const startToday = startOfDayMs(Date.now());
+  const series: number[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const dayStart = startToday - i * ONE_DAY_MS;
+    const dayEnd = dayStart + ONE_DAY_MS;
+    const sum = orders
+      .filter((o) => o.timestamp >= dayStart && o.timestamp < dayEnd && o.status !== 'cancelled')
+      .reduce((acc, o) => acc + valueFn(o), 0);
+    series.push(sum);
+  }
+  return series;
+}
+
+/**
+ * Sum the value of all (non-cancelled) orders that fall within [from, to).
+ */
+function periodTotal(orders: Order[], from: number, to: number, valueFn: (o: Order) => number): number {
+  return orders
+    .filter((o) => o.timestamp >= from && o.timestamp < to && o.status !== 'cancelled')
+    .reduce((acc, o) => acc + valueFn(o), 0);
+}
+
+interface Trend {
+  pct: number;
+  direction: 'up' | 'down' | 'flat';
+}
+
+/**
+ * Compute the percentage change from `previous` to `current`, with a small
+ * dead-zone around zero to avoid showing "0.3% ↑" noise.
+ */
+function computeTrend(current: number, previous: number): Trend {
+  if (previous === 0 && current === 0) return { pct: 0, direction: 'flat' };
+  if (previous === 0) return { pct: 100, direction: 'up' };
+  const pct = ((current - previous) / previous) * 100;
+  if (Math.abs(pct) < 1) return { pct: 0, direction: 'flat' };
+  return { pct, direction: pct > 0 ? 'up' : 'down' };
+}
+
+function TrendBadge({ trend }: { trend: Trend }) {
+  const { pct, direction } = trend;
+  const color =
+    direction === 'up' ? 'text-emerald-600 bg-emerald-50' :
+    direction === 'down' ? 'text-red-600 bg-red-50' :
+    'text-gray-500 bg-gray-100';
+  const Icon = direction === 'up' ? ArrowUpRight : direction === 'down' ? ArrowDownRight : MinusIcon;
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${color}`}>
+      <Icon size={11} strokeWidth={2.5} />
+      {direction === 'flat' ? '0%' : `${Math.abs(pct).toFixed(0)}%`}
+    </span>
+  );
+}
+
+interface StatCardProps {
+  label: string;
+  value: string;
+  trend?: Trend;
+  trendCaption?: string;
+  icon: React.ReactNode;
+  iconBg: string;
+}
+
+function StatCard({ label, value, trend, trendCaption, icon, iconBg }: StatCardProps) {
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${iconBg}`}>{icon}</div>
+        {trend && <TrendBadge trend={trend} />}
+      </div>
+      <p className="text-2xl font-black text-gray-900 leading-tight">{value}</p>
+      <p className="text-xs text-gray-400 mt-1">{label}</p>
+      {trend && trendCaption && (
+        <p className="text-[10px] text-gray-400 mt-0.5">{trendCaption}</p>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({ restaurant }: { restaurant: Restaurant }) {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [range, setRange] = useState<Range>('1d');
 
   useEffect(() => {
     const unsub = onValue(refs.restaurantOrders(restaurant.id), (snap) => {
@@ -228,41 +328,134 @@ function Dashboard({ restaurant }: { restaurant: Restaurant }) {
     return () => unsub();
   }, [restaurant.id]);
 
-  const todayOrders = orders.filter((o) => o.timestamp >= today() && o.status !== 'cancelled');
-  const activeOrders = orders.filter((o) => ['new', 'preparing', 'ready'].includes(o.status));
-  const todayRevenue = todayOrders.reduce((s, o) => s + (o.totalPrice ?? 0), 0);
+  const days = RANGE_DAYS[range];
+  const startToday = startOfDayMs(Date.now());
+  const periodFrom = startToday - (days - 1) * ONE_DAY_MS;
+  const periodTo = Date.now();
+  const prevPeriodFrom = periodFrom - days * ONE_DAY_MS;
+  const prevPeriodTo = periodFrom;
 
-  const stats = [
-    { label: "Today's orders", value: todayOrders.length, color: 'text-orange-500' },
-    { label: 'Active now', value: activeOrders.length, color: 'text-blue-500' },
-    { label: "Today's revenue", value: formatPrice(todayRevenue), color: 'text-green-500' },
-  ];
+  // Current vs previous-period totals for trend computation.
+  const currentOrderCount = orders.filter(
+    (o) => o.timestamp >= periodFrom && o.timestamp < periodTo && o.status !== 'cancelled',
+  ).length;
+  const prevOrderCount = orders.filter(
+    (o) => o.timestamp >= prevPeriodFrom && o.timestamp < prevPeriodTo && o.status !== 'cancelled',
+  ).length;
+
+  const currentRevenue = periodTotal(orders, periodFrom, periodTo, (o) => o.totalPrice ?? 0);
+  const prevRevenue = periodTotal(orders, prevPeriodFrom, prevPeriodTo, (o) => o.totalPrice ?? 0);
+
+  const aov = currentOrderCount > 0 ? currentRevenue / currentOrderCount : 0;
+  const prevAov = prevOrderCount > 0 ? prevRevenue / prevOrderCount : 0;
+
+  const orderSeries = dailySeries(orders, days, () => 1);
+  const revenueSeries = dailySeries(orders, days, (o) => o.totalPrice ?? 0);
+
+  const activeOrders = orders.filter((o) => ['new', 'preparing', 'ready'].includes(o.status));
+
+  // Whether to render trend badges. Hide for the "today" view because the
+  // previous "day" comparison is yesterday — too noisy for a same-day stat
+  // that only has a few hours of data.
+  const showTrend = range !== '1d';
+  const prevCaption = range === '7d' ? 'vs previous 7d' : range === '30d' ? 'vs previous 30d' : '';
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-gray-900 mb-5">Dashboard</h2>
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        {stats.map((s) => (
-          <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm">
-            <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-gray-400 mt-1">{s.label}</p>
-          </div>
-        ))}
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-xl font-bold text-gray-900">Dashboard</h2>
+        {/* Time-range picker */}
+        <div className="inline-flex bg-gray-100 rounded-xl p-0.5">
+          {(['1d', '7d', '30d'] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              aria-pressed={range === r}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                range === r ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {RANGE_LABELS[r]}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <h3 className="font-semibold text-gray-700 mb-3">Active orders</h3>
+      {/* Stat cards */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <StatCard
+          label={range === '1d' ? "Today's orders" : 'Orders'}
+          value={String(currentOrderCount)}
+          trend={showTrend ? computeTrend(currentOrderCount, prevOrderCount) : undefined}
+          trendCaption={prevCaption}
+          icon={<ShoppingBag className="w-5 h-5 text-orange-600" />}
+          iconBg="bg-orange-100"
+        />
+        <StatCard
+          label={range === '1d' ? "Today's revenue" : 'Revenue'}
+          value={formatPrice(currentRevenue)}
+          trend={showTrend ? computeTrend(currentRevenue, prevRevenue) : undefined}
+          trendCaption={prevCaption}
+          icon={<Wallet className="w-5 h-5 text-emerald-600" />}
+          iconBg="bg-emerald-100"
+        />
+        <StatCard
+          label="Avg. order"
+          value={formatPrice(aov)}
+          trend={showTrend ? computeTrend(aov, prevAov) : undefined}
+          trendCaption={prevCaption}
+          icon={<Receipt className="w-5 h-5 text-blue-600" />}
+          iconBg="bg-blue-100"
+        />
+      </div>
+
+      {/* Sparkline panel — orders per day across the selected range. */}
+      {range !== '1d' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm mb-6">
+          <div className="flex items-end justify-between mb-3">
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Orders per day</p>
+              <p className="text-lg font-bold text-gray-900 mt-0.5">{currentOrderCount} total</p>
+            </div>
+            <p className="text-xs text-gray-400">{RANGE_LABELS[range]}</p>
+          </div>
+          <Sparkline data={orderSeries} className="w-full h-16" />
+          {/* Optional second line under: revenue trend */}
+          <div className="mt-2 flex items-end justify-between text-xs">
+            <span className="text-gray-400">Revenue trend</span>
+            <span className="font-semibold text-gray-700">{formatPrice(currentRevenue)}</span>
+          </div>
+          <Sparkline data={revenueSeries} className="w-full h-10 mt-1" color="#10b981" />
+        </div>
+      )}
+
+      {/* Active orders */}
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold text-gray-700">Active orders</h3>
+        {activeOrders.length > 0 && (
+          <span className="text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">
+            {activeOrders.length} live
+          </span>
+        )}
+      </div>
       {activeOrders.length === 0 ? (
-        <p className="text-gray-400 text-sm">No active orders right now.</p>
+        <div className="bg-white rounded-2xl p-8 shadow-sm flex flex-col items-center justify-center text-center">
+          <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mb-3">
+            <Package className="w-6 h-6 text-gray-400" />
+          </div>
+          <p className="text-gray-500 text-sm font-medium">No active orders right now</p>
+          <p className="text-gray-400 text-xs mt-0.5">New orders will appear here in real time.</p>
+        </div>
       ) : (
         <div className="space-y-2">
           {activeOrders.map((o) => (
             <div key={o.id} className="bg-white rounded-2xl p-4 shadow-sm flex items-center justify-between">
-              <div>
+              <div className="min-w-0">
                 <span className="font-bold text-gray-900">#{String(o.orderNumber).padStart(3, '0')}</span>
                 {o.tableNumber != null && <span className="text-gray-400 text-sm ml-2">Table {o.tableNumber}</span>}
-                <p className="text-sm text-gray-600 mt-0.5">{o.itemsReadable}</p>
+                <p className="text-sm text-gray-600 mt-0.5 truncate">{o.itemsReadable}</p>
               </div>
-              <span className={`text-xs font-semibold px-2 py-1 rounded-lg capitalize ${
+              <span className={`flex-shrink-0 text-xs font-semibold px-2 py-1 rounded-lg capitalize ${
                 o.status === 'new' ? 'bg-orange-100 text-orange-600' :
                 o.status === 'preparing' ? 'bg-blue-100 text-blue-600' :
                 'bg-green-100 text-green-600'
