@@ -3,7 +3,7 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, UtensilsCrossed, QrCode, Settings, LogOut,
-  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package
+  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package, Check, Sparkles,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -214,6 +214,124 @@ function today() {
   const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
 }
 
+// ─── Onboarding Checklist ─────────────────────────────────────────────────────
+
+/**
+ * First-run checklist shown on the Dashboard when the restaurant is not yet
+ * ready to take orders. Once both required steps (menu + logo) are complete,
+ * the panel disappears automatically and never returns. The optional Stripe
+ * step doesn't keep the panel open; it nudges the user but they can ignore it.
+ *
+ * Detection is purely based on Restaurant fields — no separate "onboarding
+ * completed" flag — so the checklist correctly reappears if the admin
+ * deletes all menu items or clears the logo (recovery / re-onboarding).
+ */
+function OnboardingChecklist({ restaurant }: { restaurant: Restaurant }) {
+  const menuItemCount = Object.keys(restaurant.menu ?? {}).length;
+
+  const steps = [
+    {
+      done: menuItemCount > 0,
+      title: 'Add your menu',
+      description: 'Customers see this when they scan a QR code at their table.',
+      cta: 'Add items',
+      to: '/admin/menu',
+      optional: false,
+    },
+    {
+      done: Boolean(restaurant.logo),
+      title: 'Upload your logo',
+      description: 'Appears in the customer order page and admin top bar.',
+      cta: 'Open settings',
+      to: '/admin/settings',
+      optional: false,
+    },
+    {
+      done: Boolean(restaurant.stripePublishableKey),
+      title: 'Enable card payments',
+      description: 'Accept Apple Pay, Google Pay, and credit cards via Stripe.',
+      cta: 'Connect Stripe',
+      to: '/admin/settings',
+      optional: true,
+    },
+  ];
+
+  const required = steps.filter((s) => !s.optional);
+  const completed = required.filter((s) => s.done).length;
+  const allRequiredDone = completed === required.length;
+  if (allRequiredDone) return null;
+
+  const progressPct = (completed / required.length) * 100;
+
+  return (
+    <div className="bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-100 rounded-2xl p-5 mb-4">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-orange-500 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Sparkles className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <h3 className="font-bold text-gray-900 leading-tight">Get your restaurant ready</h3>
+            <p className="text-xs text-gray-500 mt-0.5">A few quick steps before your first order.</p>
+          </div>
+        </div>
+        <span className="text-xs font-bold text-orange-600 mt-1.5 flex-shrink-0">
+          {completed}/{required.length}
+        </span>
+      </div>
+
+      <div className="w-full h-1.5 bg-orange-100 rounded-full overflow-hidden mb-4">
+        <div
+          className="h-full bg-orange-500 rounded-full transition-all duration-500"
+          style={{ width: `${progressPct}%` }}
+          role="progressbar"
+          aria-valuenow={completed}
+          aria-valuemin={0}
+          aria-valuemax={required.length}
+          aria-label="Onboarding progress"
+        />
+      </div>
+
+      <div className="space-y-2">
+        {steps.map((step) => (
+          <div
+            key={step.title}
+            className={`bg-white rounded-xl p-3 flex items-center gap-3 transition-opacity ${step.done ? 'opacity-60' : ''}`}
+          >
+            <div
+              className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${
+                step.done ? 'bg-emerald-500 text-white' : 'border-2 border-gray-200 bg-white'
+              }`}
+              aria-hidden="true"
+            >
+              {step.done && <Check size={14} strokeWidth={3} />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-semibold ${step.done ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
+                {step.title}
+                {step.optional && (
+                  <span className="text-xs text-gray-400 ml-1.5 font-normal italic">optional</span>
+                )}
+              </p>
+              {!step.done && (
+                <p className="text-xs text-gray-500 mt-0.5 leading-snug">{step.description}</p>
+              )}
+            </div>
+            {!step.done && (
+              <NavLink
+                to={step.to}
+                className="flex-shrink-0 text-xs font-bold text-orange-600 hover:text-orange-700 px-3 py-1.5 rounded-lg hover:bg-orange-50 transition-colors"
+              >
+                {step.cta} →
+              </NavLink>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 function Dashboard({ restaurant }: { restaurant: Restaurant }) {
@@ -241,6 +359,7 @@ function Dashboard({ restaurant }: { restaurant: Restaurant }) {
   return (
     <div>
       <h2 className="text-xl font-bold text-gray-900 mb-5">Dashboard</h2>
+      <OnboardingChecklist restaurant={restaurant} />
       <div className="grid grid-cols-3 gap-3 mb-6">
         {stats.map((s) => (
           <div key={s.label} className="bg-white rounded-2xl p-4 shadow-sm">
