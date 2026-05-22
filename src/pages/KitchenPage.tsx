@@ -234,6 +234,14 @@ export default function KitchenPage() {
     setMuted((prev) => {
       const next = !prev;
       writeMuted(next);
+      // When unmuting (was muted, now unmuted), fire a test beep so kitchen
+      // staff can verify audio is actually working without placing a test
+      // order. The click handler itself is a user gesture, which doubles as
+      // an audio-unlock opportunity for browsers (notably iPad Safari) that
+      // may not have unlocked during the PIN-entry phase.
+      if (prev && !next) {
+        void playNewOrderAlert();
+      }
       return next;
     });
   }
