@@ -7,6 +7,7 @@ import { refs, placeOrder } from '../lib/firebase';
 import { createCheckoutSession } from '../lib/stripe';
 import { useCartStore } from '../store/cartStore';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
+import { OrderPageSkeleton } from '../components/Skeleton';
 import type { Restaurant, MenuItem, CartItem } from '../types';
 
 // ─── Utility ────────────────────────────────────────────────────────────────
@@ -432,11 +433,7 @@ export default function OrderPage() {
   }, [restaurantId]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <OrderPageSkeleton />;
   }
 
   if (error) {
