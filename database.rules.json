@@ -9,7 +9,7 @@
       }
     },
     "orders": {
-      ".read": true,
+      ".read": "query.orderByChild == 'restaurantId' && query.equalTo != null",
       ".indexOn": ["restaurantId"],
       "$orderId": {
         ".write": "!data.exists() || (data.exists() && (auth != null || (newData.child('totalPrice').val() == data.child('totalPrice').val() && newData.child('items').val() == data.child('items').val() && newData.child('restaurantId').val() == data.child('restaurantId').val() && newData.child('customerName').val() == data.child('customerName').val())))"
