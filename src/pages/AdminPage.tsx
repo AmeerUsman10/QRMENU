@@ -992,7 +992,7 @@ function AdminShell() {
             <img
               src={restaurant.logo}
               alt={`${restaurant.name} logo`}
-              className="w-8 h-8 rounded-lg object-cover"
+              className="h-9 w-auto max-w-[120px] rounded-lg object-contain"
             />
           )}
           <span className="font-bold text-gray-900">{restaurant.name}</span>
