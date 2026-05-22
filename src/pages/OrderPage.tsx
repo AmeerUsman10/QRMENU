@@ -6,6 +6,7 @@ import { onValue } from 'firebase/database';
 import { refs, placeOrder } from '../lib/firebase';
 import { createCheckoutSession } from '../lib/stripe';
 import { useCartStore } from '../store/cartStore';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Restaurant, MenuItem, CartItem } from '../types';
 
 // ─── Utility ────────────────────────────────────────────────────────────────
@@ -395,6 +396,14 @@ export default function OrderPage() {
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  useDocumentTitle(
+    error
+      ? 'Restaurant not found'
+      : restaurant
+        ? `${restaurant.name}${tableParam ? ` — Table ${tableParam}` : ''}`
+        : 'Loading menu',
+  );
   const [tableNumber, setTableNumber] = useState<number | null>(
     tableParam ? parseInt(tableParam, 10) : null,
   );

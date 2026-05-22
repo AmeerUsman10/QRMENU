@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onValue, get } from 'firebase/database';
 import { refs, updateOrderStatus } from '../lib/firebase';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Order, OrderStatus, Restaurant } from '../types';
 import { useSearchParams } from 'react-router-dom';
 
@@ -223,6 +224,12 @@ export default function KitchenPage() {
   const [tab, setTab] = useState<'active' | 'history'>('active');
   const prevNewCount = useRef(0);
   const bellRef = useRef<HTMLAudioElement | null>(null);
+
+  // Tab-title cue for kitchen staff who keep the page in a background tab:
+  // prefix the active-order count so the tab acts like a Gmail-style badge.
+  const activeCount = orders.length;
+  const titlePrefix = activeCount > 0 ? `(${activeCount}) ` : '';
+  useDocumentTitle(auth ? `${titlePrefix}Kitchen · ${auth.name}` : 'Kitchen');
 
   useEffect(() => {
     if (!auth) return;
