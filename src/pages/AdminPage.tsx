@@ -123,8 +123,13 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
               className="w-full border border-gray-200 rounded-xl px-4 py-3 pr-12 outline-none focus:border-orange-400 transition-colors"
               placeholder="••••••••"
             />
-            <button type="button" onClick={() => setShowPass(!showPass)}
-              className="absolute right-3 top-9 p-1 text-gray-400">
+            <button
+              type="button"
+              onClick={() => setShowPass(!showPass)}
+              aria-label={showPass ? 'Hide password' : 'Show password'}
+              aria-pressed={showPass}
+              className="absolute right-3 top-9 p-1 text-gray-400"
+            >
               {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
             </button>
           </div>
@@ -373,7 +378,11 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
             >
               {cat}
             </button>
-            <button onClick={() => deleteCategory(cat)} className="p-1 text-gray-300 hover:text-red-400">
+            <button
+              onClick={() => deleteCategory(cat)}
+              aria-label={`Delete category ${cat}`}
+              className="p-1 text-gray-300 hover:text-red-400"
+            >
               <X size={14} />
             </button>
           </div>
@@ -412,15 +421,26 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
                   <p className="text-orange-500 font-semibold text-sm">{formatPrice(item.price)}</p>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => toggleAvailable(item.id, item.available)}
-                    className={`px-2 py-1 rounded-lg text-xs font-semibold ${item.available ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                  <button
+                    onClick={() => toggleAvailable(item.id, item.available)}
+                    aria-label={item.available ? `Mark ${item.name} as unavailable` : `Mark ${item.name} as available`}
+                    aria-pressed={item.available}
+                    className={`px-2 py-1 rounded-lg text-xs font-semibold ${item.available ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}
+                  >
                     {item.available ? 'On' : 'Off'}
                   </button>
-                  <button onClick={() => setEditItem({ id: item.id, name: item.name, price: String(item.price), description: item.description ?? '', category: item.category, image: item.image, available: item.available, popular: item.popular ?? false })}
-                    className="p-2 text-gray-400 hover:text-gray-700">
+                  <button
+                    onClick={() => setEditItem({ id: item.id, name: item.name, price: String(item.price), description: item.description ?? '', category: item.category, image: item.image, available: item.available, popular: item.popular ?? false })}
+                    aria-label={`Edit ${item.name}`}
+                    className="p-2 text-gray-400 hover:text-gray-700"
+                  >
                     <Pencil size={15} />
                   </button>
-                  <button onClick={() => deleteItem(item.id)} className="p-2 text-gray-300 hover:text-red-500">
+                  <button
+                    onClick={() => deleteItem(item.id)}
+                    aria-label={`Delete ${item.name}`}
+                    className="p-2 text-gray-300 hover:text-red-500"
+                  >
                     <Trash2 size={15} />
                   </button>
                 </div>
@@ -449,7 +469,13 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
             >
               <div className="flex items-center justify-between mb-5">
                 <h3 className="font-bold text-lg text-gray-900">{editItem.id ? 'Edit item' : 'New item'}</h3>
-                <button onClick={() => setEditItem(null)}><X size={20} className="text-gray-400" /></button>
+                <button
+                  onClick={() => setEditItem(null)}
+                  aria-label="Close edit panel"
+                  className="p-1"
+                >
+                  <X size={20} className="text-gray-400" />
+                </button>
               </div>
               <div className="space-y-4">
                 {[
@@ -866,11 +892,19 @@ function AdminShell() {
       <div className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {restaurant.logo && (
-            <img src={restaurant.logo} alt="" className="w-8 h-8 rounded-lg object-cover" />
+            <img
+              src={restaurant.logo}
+              alt={`${restaurant.name} logo`}
+              className="w-8 h-8 rounded-lg object-cover"
+            />
           )}
           <span className="font-bold text-gray-900">{restaurant.name}</span>
         </div>
-        <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-gray-700">
+        <button
+          onClick={handleLogout}
+          aria-label="Sign out"
+          className="p-2 text-gray-400 hover:text-gray-700"
+        >
           <LogOut size={18} />
         </button>
       </div>
