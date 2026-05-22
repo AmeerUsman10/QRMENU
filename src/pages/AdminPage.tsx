@@ -628,6 +628,12 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
     logo: restaurant.logo ?? '',
     tables: String(restaurant.tables ?? 1),
     kitchenPin: restaurant.kitchenPin ?? '',
+    // Customer-facing trust signals — shown on /order header
+    coverImage: restaurant.coverImage ?? '',
+    description: restaurant.description ?? '',
+    address: restaurant.address ?? '',
+    phone: restaurant.phone ?? '',
+    hours: restaurant.hours ?? '',
     stripeSecretKey: restaurant.stripeSecretKey ?? '',
     stripePublishableKey: restaurant.stripePublishableKey ?? '',
     stripeWebhookSecret: restaurant.stripeWebhookSecret ?? '',
@@ -642,6 +648,11 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
       logo: form.logo.trim(),
       tables: parseInt(form.tables, 10),
       kitchenPin: form.kitchenPin.trim(),
+      coverImage: form.coverImage.trim() || null,
+      description: form.description.trim() || null,
+      address: form.address.trim() || null,
+      phone: form.phone.trim() || null,
+      hours: form.hours.trim() || null,
       stripeSecretKey: form.stripeSecretKey.trim() || null,
       stripePublishableKey: form.stripePublishableKey.trim() || null,
       stripeWebhookSecret: form.stripeWebhookSecret.trim() || null,
@@ -656,6 +667,16 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
     { label: 'Logo URL', key: 'logo', placeholder: 'https://...' },
     { label: 'Number of tables', key: 'tables', placeholder: '10', type: 'number' },
     { label: 'Kitchen PIN', key: 'kitchenPin', placeholder: '4-digit PIN', type: 'password' },
+  ];
+
+  // Public profile fields — surfaced to customers on the /order page header.
+  // All optional; restaurants without these set keep their compact header.
+  const publicProfileFields = [
+    { label: 'Cover photo URL', key: 'coverImage', placeholder: 'https://… (16:9 photo of your interior or dish)' },
+    { label: 'Short description / tagline', key: 'description', placeholder: 'Wood-fired Neapolitan pizza in the heart of Maribor' },
+    { label: 'Address', key: 'address', placeholder: 'Glavni trg 5, 2000 Maribor' },
+    { label: 'Public phone', key: 'phone', placeholder: '+386 ...' },
+    { label: 'Opening hours', key: 'hours', placeholder: 'Mon–Fri 10:00–22:00 · Sat–Sun 11:00–23:00' },
   ];
 
   const stripeFields = [
@@ -682,6 +703,38 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
                 placeholder={f.placeholder}
                 className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400"
               />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Public Profile — fields surfaced to customers on the /order page. */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
+        <h3 className="font-semibold text-gray-800 mb-1">Public profile</h3>
+        <p className="text-xs text-gray-400 mb-4">
+          What customers see when they scan a QR code. All optional — leave blank to hide that row.
+        </p>
+        <div className="space-y-4">
+          {publicProfileFields.map((f) => (
+            <div key={f.key}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+              {f.key === 'description' ? (
+                <textarea
+                  rows={2}
+                  value={(form as any)[f.key]}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                  placeholder={f.placeholder}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400 resize-none"
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={(form as any)[f.key]}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                  placeholder={f.placeholder}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400"
+                />
+              )}
             </div>
           ))}
         </div>

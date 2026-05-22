@@ -41,6 +41,18 @@ export interface Restaurant {
   stripeSecretKey?: string;
   stripePublishableKey?: string;
   stripeWebhookSecret?: string;
+
+  // ─── Customer-facing trust signals (all optional; existing data unaffected)
+  /** Hero cover photo shown at the top of the customer order page. */
+  coverImage?: string;
+  /** Short tagline / pitch line shown under the restaurant name. 1-2 sentences. */
+  description?: string;
+  /** Street address — rendered as a "map" link to the user's default maps app. */
+  address?: string;
+  /** Public phone — rendered as a "tap to call" link. Distinct from kitchenPin. */
+  phone?: string;
+  /** Free-form opening hours, e.g. "Mon-Fri 10:00-22:00 · Sat-Sun 11:00-23:00". */
+  hours?: string;
 }
 
 export interface CartItem {

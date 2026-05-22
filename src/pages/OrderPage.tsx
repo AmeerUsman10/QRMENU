@@ -1,12 +1,22 @@
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Plus, Minus, UtensilsCrossed, CheckCircle } from 'lucide-react';
+import { X, Plus, Minus, UtensilsCrossed, CheckCircle, MapPin, Phone, Clock, ShieldCheck } from 'lucide-react';
 import { onValue } from 'firebase/database';
 import { refs, placeOrder } from '../lib/firebase';
 import { createCheckoutSession } from '../lib/stripe';
 import { useCartStore } from '../store/cartStore';
 import type { Restaurant, MenuItem, CartItem } from '../types';
+
+// Build a maps URL appropriate for the user's platform. Uses the cross-platform
+// `maps:` scheme on iOS / iPadOS (opens Apple Maps), otherwise Google Maps.
+function getMapsUrl(address: string): string {
+  const q = encodeURIComponent(address);
+  if (typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    return `maps://?q=${q}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${q}`;
+}
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -315,7 +325,13 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPl
                   ))}
                 </div>
                 {form.payment === 'card' && (
-                  <p className="text-xs text-gray-400 mt-2 text-center">Apple Pay & Google Pay accepted</p>
+                  <div className="mt-2 flex items-center justify-center gap-1.5 text-xs text-gray-500">
+                    <ShieldCheck size={13} className="text-emerald-500" />
+                    <span>Secure checkout via Stripe — Apple Pay & Google Pay accepted</span>
+                  </div>
+                )}
+                {form.payment === 'cash' && (
+                  <p className="text-xs text-gray-400 mt-2 text-center">Pay at the counter or when served</p>
                 )}
               </div>
 
@@ -499,19 +515,100 @@ export default function OrderPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
-      {/* Restaurant header */}
-      <div className="bg-white px-4 pt-6 pb-4 sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center gap-3 mb-4">
-          {restaurant.logo && (
-            <img src={restaurant.logo} alt={restaurant.name} className="h-10 w-10 rounded-xl object-cover" />
-          )}
-          <div>
-            <h1 className="text-lg font-bold text-gray-900 leading-tight">{restaurant.name}</h1>
-            {tableNumber != null && (
-              <p className="text-sm text-gray-400">Table {tableNumber}</p>
+      {/* Hero cover image (only if the restaurant has set one). Lays the
+          restaurant logo + name over the photo for a real-product feel,
+          instead of a bare gray header. */}
+      {restaurant.coverImage && (
+        <div className="relative w-full h-48 bg-gray-100 overflow-hidden">
+          <img
+            src={restaurant.coverImage}
+            alt={`${restaurant.name} — restaurant interior`}
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
+          {/* Top-down gradient so the photo darkens toward the bottom and
+              the logo+name overlay stays legible regardless of the image. */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/55" />
+          <div className="absolute bottom-3 left-4 right-4 flex items-end gap-3">
+            {restaurant.logo && (
+              <img
+                src={restaurant.logo}
+                alt={`${restaurant.name} logo`}
+                className="h-14 w-14 rounded-xl object-cover ring-4 ring-white shadow-md"
+              />
             )}
+            <div className="flex-1 min-w-0 pb-1">
+              <h1 className="text-xl font-black text-white leading-tight drop-shadow-md truncate">{restaurant.name}</h1>
+              {restaurant.description && (
+                <p className="text-sm text-white/90 leading-snug drop-shadow line-clamp-2">{restaurant.description}</p>
+              )}
+            </div>
           </div>
         </div>
+      )}
+
+      {/* Restaurant header (compact mode — used when no coverImage is set, OR
+          rendered below the hero as a sticky strip on scroll). */}
+      <div className="bg-white px-4 pt-4 pb-3 sticky top-0 z-10 shadow-sm">
+        {!restaurant.coverImage && (
+          <div className="flex items-center gap-3 mb-3">
+            {restaurant.logo && (
+              <img
+                src={restaurant.logo}
+                alt={`${restaurant.name} logo`}
+                className="h-10 w-10 rounded-xl object-cover"
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-bold text-gray-900 leading-tight truncate">{restaurant.name}</h1>
+              {restaurant.description && (
+                <p className="text-xs text-gray-500 line-clamp-1">{restaurant.description}</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Trust signals: address, phone, hours. Each is tappable when
+            relevant — phone dials, address opens maps. Hides the row
+            entirely when none of the fields are set, so existing
+            restaurants without this data don't get an empty strip. */}
+        {(restaurant.address || restaurant.phone || restaurant.hours) && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1.5 text-xs text-gray-500 mb-3">
+            {restaurant.address && (
+              <a
+                href={getMapsUrl(restaurant.address)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 hover:text-orange-600 transition-colors"
+              >
+                <MapPin size={13} className="text-gray-400" />
+                <span className="truncate max-w-[200px]">{restaurant.address}</span>
+              </a>
+            )}
+            {restaurant.phone && (
+              <a
+                href={`tel:${restaurant.phone.replace(/\s+/g, '')}`}
+                className="inline-flex items-center gap-1 hover:text-orange-600 transition-colors"
+              >
+                <Phone size={13} className="text-gray-400" />
+                <span>{restaurant.phone}</span>
+              </a>
+            )}
+            {restaurant.hours && (
+              <span className="inline-flex items-center gap-1">
+                <Clock size={13} className="text-gray-400" />
+                <span>{restaurant.hours}</span>
+              </span>
+            )}
+          </div>
+        )}
+
+        {tableNumber != null && (
+          <div className="mb-3 inline-flex items-center gap-2 bg-orange-50 text-orange-700 text-xs font-bold px-3 py-1.5 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-orange-500" />
+            You are seated at Table {tableNumber}
+          </div>
+        )}
 
         {/* Category pills */}
         {categories.length > 0 && (
@@ -551,21 +648,31 @@ export default function OrderPage() {
                     key={item.id}
                     onClick={() => handleItemTap(item)}
                     disabled={!item.available}
-                    className={`w-full bg-white rounded-2xl p-3 flex gap-3 text-left shadow-sm transition-all active:scale-[0.98] ${
-                      !item.available ? 'opacity-50' : ''
+                    aria-label={item.available ? `Add ${item.name} to order` : `${item.name} — sold out`}
+                    className={`w-full bg-white rounded-2xl p-3 flex gap-3 text-left shadow-sm transition-all ${
+                      item.available ? 'active:scale-[0.98]' : 'opacity-75 cursor-not-allowed'
                     }`}
                   >
                     {item.image && (
-                      <img
-                        src={item.image}
-                        alt={item.name}
-                        className="w-20 h-20 rounded-xl object-cover flex-shrink-0"
-                      />
+                      <div className="relative flex-shrink-0">
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          className={`w-20 h-20 rounded-xl object-cover ${!item.available ? 'grayscale' : ''}`}
+                        />
+                        {!item.available && (
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-xl text-white text-[10px] font-bold uppercase tracking-wide">
+                            Sold out
+                          </span>
+                        )}
+                      </div>
                     )}
                     <div className="flex-1 min-w-0 py-1">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="font-semibold text-gray-900 text-sm leading-snug">{item.name}</p>
-                        {item.popular && (
+                        <p className={`font-semibold text-sm leading-snug ${item.available ? 'text-gray-900' : 'text-gray-500'}`}>
+                          {item.name}
+                        </p>
+                        {item.popular && item.available && (
                           <span className="flex-shrink-0 text-xs bg-orange-100 text-orange-500 px-2 py-0.5 rounded-full">Popular</span>
                         )}
                       </div>
@@ -573,13 +680,17 @@ export default function OrderPage() {
                         <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{item.description}</p>
                       )}
                       <div className="flex items-center justify-between mt-2">
-                        <span className="font-bold text-gray-900 text-sm">{formatPrice(item.price)}</span>
-                        {!item.available ? (
-                          <span className="text-xs text-gray-400">Unavailable</span>
-                        ) : (
+                        <span className={`font-bold text-sm ${
+                          item.available ? 'text-gray-900' : 'text-gray-400 line-through'
+                        }`}>
+                          {formatPrice(item.price)}
+                        </span>
+                        {item.available ? (
                           <div className="w-7 h-7 rounded-full bg-orange-500 flex items-center justify-center">
                             <Plus size={16} className="text-white" />
                           </div>
+                        ) : (
+                          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Unavailable</span>
                         )}
                       </div>
                     </div>
