@@ -234,7 +234,11 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPl
             {step === 'cart' ? 'Your order' : 'Checkout'}
             {tableNumber != null && <span className="ml-2 text-sm font-normal text-gray-400">Table {tableNumber}</span>}
           </h2>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100">
+          <button
+            onClick={onClose}
+            aria-label="Close cart"
+            className="p-2 rounded-full hover:bg-gray-100"
+          >
             <X size={20} className="text-gray-500" />
           </button>
         </div>
@@ -251,11 +255,24 @@ function CartSheet({ onClose, restaurant, tableNumber, onOrderPlaced: _onOrderPl
                     <p className="text-orange-500 font-semibold text-sm mt-0.5">{formatPrice(item.price)}</p>
                   </div>
                   <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-1 py-1">
-                    <button onClick={() => changeQty(item.id, -1)} className="p-1 rounded-lg">
+                    <button
+                      onClick={() => changeQty(item.id, -1)}
+                      aria-label={`Decrease quantity of ${item.name}`}
+                      className="p-1 rounded-lg"
+                    >
                       <Minus size={16} className="text-gray-600" />
                     </button>
-                    <span className="w-6 text-center font-semibold text-gray-900 text-sm">{item.quantity}</span>
-                    <button onClick={() => changeQty(item.id, 1)} className="p-1 rounded-lg">
+                    <span
+                      className="w-6 text-center font-semibold text-gray-900 text-sm"
+                      aria-label={`Quantity ${item.quantity}`}
+                    >
+                      {item.quantity}
+                    </span>
+                    <button
+                      onClick={() => changeQty(item.id, 1)}
+                      aria-label={`Increase quantity of ${item.name}`}
+                      className="p-1 rounded-lg"
+                    >
                       <Plus size={16} className="text-gray-600" />
                     </button>
                   </div>
