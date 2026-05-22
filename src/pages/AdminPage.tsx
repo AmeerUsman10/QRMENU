@@ -1,16 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, UtensilsCrossed, QrCode, Settings, LogOut,
-  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package
+  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package, Upload, ImageIcon
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
-import { auth, refs } from '../lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { auth, refs, storage } from '../lib/firebase';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Restaurant, MenuItem, Order } from '../types';
 
@@ -215,6 +216,75 @@ function useRestaurantForUser(): [Restaurant | null, boolean] {
 }
 
 function formatPrice(n: number) { return `€${n.toFixed(2)}`; }
+
+// ─── Image Uploader ───────────────────────────────────────────────────────────
+
+function ImageUploader({ value, onChange, path }: {
+  value: string;
+  onChange: (url: string) => void;
+  path: string; // e.g. "logos/shakespeare-pub" or "menu-items/abc123"
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleFile(file: File) {
+    if (!file.type.startsWith('image/')) { setError('Please select an image file.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('Image must be under 5 MB.'); return; }
+    setError('');
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop() ?? 'jpg';
+      const sRef = storageRef(storage, `${path}.${ext}`);
+      await uploadBytes(sRef, file);
+      const url = await getDownloadURL(sRef);
+      onChange(url);
+    } catch (e) {
+      setError('Upload failed. Please try again.');
+    }
+    setUploading(false);
+  }
+
+  return (
+    <div className="space-y-2">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+      />
+      {value ? (
+        <div className="relative w-full rounded-2xl overflow-hidden border border-gray-200 bg-gray-50">
+          <img src={value} alt="Preview" className="w-full h-40 object-cover" />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="absolute bottom-2 right-2 bg-white/90 backdrop-blur-sm text-gray-700 text-xs font-semibold px-3 py-1.5 rounded-xl shadow flex items-center gap-1.5 hover:bg-white transition-colors"
+          >
+            <Upload size={13} /> Change
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="w-full border-2 border-dashed border-gray-200 rounded-2xl py-8 flex flex-col items-center gap-2 text-gray-400 hover:border-orange-400 hover:text-orange-400 transition-colors disabled:opacity-50"
+        >
+          {uploading ? (
+            <div className="w-6 h-6 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <ImageIcon size={28} />
+          )}
+          <span className="text-sm font-medium">{uploading ? 'Uploading…' : 'Click to upload image'}</span>
+          <span className="text-xs">PNG, JPG, WEBP · max 5 MB</span>
+        </button>
+      )}
+      {error && <p className="text-red-500 text-xs">{error}</p>}
+    </div>
+  );
+}
 
 function today() {
   const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
@@ -482,7 +552,6 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
                 {[
                   { label: 'Name *', key: 'name', placeholder: 'e.g. Margherita Pizza' },
                   { label: 'Price (€) *', key: 'price', placeholder: '9.50', type: 'number' },
-                  { label: 'Image URL', key: 'image', placeholder: 'https://...' },
                   { label: 'Description', key: 'description', placeholder: 'Short description...', multiline: true },
                 ].map((f) => (
                   <div key={f.key}>
@@ -506,6 +575,14 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
                     )}
                   </div>
                 ))}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Image</label>
+                  <ImageUploader
+                    value={editItem.image}
+                    onChange={(url) => setEditItem({ ...editItem, image: url })}
+                    path={`menu-items/${restaurant.id}/${editItem.id ?? 'new-' + Date.now()}`}
+                  />
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
                   <select
@@ -680,7 +757,6 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
 
   const fields = [
     { label: 'Restaurant name', key: 'name', placeholder: 'My Restaurant' },
-    { label: 'Logo URL', key: 'logo', placeholder: 'https://...' },
     { label: 'Number of tables', key: 'tables', placeholder: '10', type: 'number' },
     { label: 'Kitchen PIN', key: 'kitchenPin', placeholder: '4-digit PIN', type: 'password' },
   ];
@@ -699,6 +775,14 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
       <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
         <h3 className="font-semibold text-gray-800 mb-4">General Settings</h3>
         <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+            <ImageUploader
+              value={form.logo}
+              onChange={(url) => setForm({ ...form, logo: url })}
+              path={`logos/${restaurant.id}`}
+            />
+          </div>
           {fields.map((f) => (
             <div key={f.key}>
               <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
