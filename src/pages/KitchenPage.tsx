@@ -206,7 +206,7 @@ interface OrderCardProps {
 }
 
 function OrderCard({ order, onStatusChange, onTogglePin, isPinned, t }: OrderCardProps) {
-  let items: { name: string; quantity: number; modifiers?: string }[] = [];
+  let items: { name: string; quantity: number; price?: number; modifiers?: string }[] = [];
   try { items = JSON.parse(order.items); } catch { /* fallback */ }
 
   const touchStartX = useRef(0);
@@ -328,6 +328,11 @@ function OrderCard({ order, onStatusChange, onTogglePin, isPinned, t }: OrderCar
                 <p className="text-[11px] text-gray-400 mt-0.5 leading-tight">{item.modifiers}</p>
               )}
             </div>
+            {item.price != null && (
+              <span className="text-xs font-bold text-gray-400 tabular-nums flex-shrink-0 pt-0.5">
+                €{(item.price * item.quantity).toFixed(2)}
+              </span>
+            )}
           </div>
         )) : (
           <p className="text-gray-600 text-sm">{order.itemsReadable}</p>
