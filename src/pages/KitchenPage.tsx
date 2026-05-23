@@ -401,6 +401,7 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
+  const [visible, setVisible] = useState(false);
 
   // Initialise instantly from localStorage cache so logo/name show with zero delay
   const cached = restaurantId ? getCachedRestaurant(restaurantId) : null;
@@ -408,6 +409,12 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   const [restaurantName, setRestaurantName] = useState<string | null>(cached?.name ?? null);
   // Only show skeleton if nothing is cached yet (true first-ever load)
   const [logoLoading, setLogoLoading] = useState(!cached && !!restaurantId);
+
+  useEffect(() => {
+    // Fade in after the first paint so any layout-settling is invisible
+    const raf = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -454,7 +461,11 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-6"
-      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.18s ease',
+      }}
     >
       <div className="w-full max-w-xs">
         <div className="flex items-center justify-center mb-6 h-24">
