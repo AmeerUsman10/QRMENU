@@ -271,7 +271,14 @@ export default function KitchenPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [history, setHistory] = useState<Order[]>([]);
   const [tab, setTab] = useState<'active' | 'history'>('active');
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const prevNewCount = useRef(0);
+
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    primeAlarm();
+    setAudioUnlocked(true);
+  }
 
   // Tab-title cue for kitchen staff who keep the page in a background tab:
   // prefix the active-order count so the tab acts like a Gmail-style badge.
@@ -317,7 +324,14 @@ export default function KitchenPage() {
   const readyOrders = orders.filter((o) => o.status === 'ready');
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100" onPointerDown={unlockAudio}>
+
+      {/* iOS audio unlock banner — disappears after first tap */}
+      {!audioUnlocked && (
+        <div className="bg-orange-500 text-white text-sm font-bold text-center py-2 px-4 cursor-pointer">
+          🔔 Tap anywhere to enable sound alerts
+        </div>
+      )}
 
       {/* Header */}
       <div className="bg-gray-900 text-white px-4 py-4 flex items-center justify-between">
