@@ -1,47 +1,69 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ref as dbRef, onValue } from 'firebase/database';
 import { WifiOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { db } from '../lib/firebase';
 
 /**
- * Sticky banner that surfaces when the Firebase Realtime Database connection
- * is lost. Listens to the special `.info/connected` ref — Firebase emits
- * `false` whenever the WebSocket / long-poll drops, `true` once it reconnects.
+ * Shows a subtle banner only when the Firebase connection has been lost for
+ * more than 3 seconds. This prevents the false-positive flash that occurs on
+ * every page load/refresh because Firebase always emits `.info/connected = false`
+ * briefly during the initial WebSocket handshake before quickly resolving to true.
  *
- * The banner is positioned `top-0 z-[60]` so it sits above every page's own
- * sticky header. Rendered globally inside <App>, so it applies to every route
- * (admin, kitchen, customer, order tracking) without per-page wiring.
- *
- * On first paint we optimistically assume "connected" so we don't flash an
- * error banner during the initial websocket handshake. Firebase typically
- * resolves `.info/connected` in <500ms.
+ * Behaviour:
+ *  - Disconnected < 3s  → banner stays hidden (covers normal refresh/PWA open)
+ *  - Disconnected ≥ 3s  → banner slides in
+ *  - Reconnected         → banner slides out immediately
  */
 export function ConnectionBanner() {
-  const [connected, setConnected] = useState(true);
+  const [showBanner, setShowBanner] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const ref = dbRef(db, '.info/connected');
     const unsub = onValue(ref, (snap) => {
-      setConnected(snap.val() === true);
+      const isConnected = snap.val() === true;
+
+      if (isConnected) {
+        // Reconnected — cancel any pending show and hide immediately
+        if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+        setShowBanner(false);
+      } else {
+        // Lost connection — wait 3s before showing the banner so that normal
+        // refresh / PWA-open handshake noise never triggers it
+        timer.current = setTimeout(() => setShowBanner(true), 3000);
+      }
     });
-    return () => unsub();
+
+    return () => {
+      unsub();
+      if (timer.current) clearTimeout(timer.current);
+    };
   }, []);
 
   return (
     <AnimatePresence>
-      {!connected && (
+      {showBanner && (
         <motion.div
-          initial={{ y: -40, opacity: 0 }}
+          initial={{ y: -48, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          exit={{ y: -40, opacity: 0 }}
-          transition={{ type: 'spring', damping: 26, stiffness: 280 }}
+          exit={{ y: -48, opacity: 0 }}
+          transition={{ type: 'spring', damping: 28, stiffness: 300 }}
           role="status"
           aria-live="polite"
-          className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-semibold shadow-md"
+          className="fixed top-0 left-0 right-0 z-[60] bg-gray-800/90 backdrop-blur-sm text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium shadow-lg"
         >
-          <WifiOff size={16} />
-          <span>Connection lost — reconnecting…</span>
+          <WifiOff size={14} className="opacity-70 flex-shrink-0" />
+          <span className="opacity-90">Reconnecting…</span>
+          <span className="flex gap-0.5 ml-1">
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                className="w-1 h-1 rounded-full bg-white opacity-60 animate-bounce"
+                style={{ animationDelay: `${i * 0.15}s` }}
+              />
+            ))}
+          </span>
         </motion.div>
       )}
     </AnimatePresence>

@@ -7,15 +7,97 @@ import type { Order, OrderStatus, Restaurant } from '../types';
 import { useSearchParams } from 'react-router-dom';
 
 const MASTER_PIN = '0000';
+const MUTE_KEY = 'kitchen.muted';
+const LANG_KEY = 'kitchen.lang';
+
+// ─── Translations ─────────────────────────────────────────────────────────────
+
+type Lang = 'sl' | 'en';
+
+const T = {
+  sl: {
+    kitchenDisplay: 'Kuhinja',
+    active: '🔥 Aktivno',
+    history: '📋 Zgodovina',
+    allClear: 'Ni aktivnih naročil',
+    allClearSub: 'Nova naročila se bodo pojavila samodejno',
+    newOrders: 'Nova naročila',
+    preparing: 'V pripravi',
+    readyToServe: 'Pripravljeno za serviranje',
+    noHistory: 'Ni zgodovine naročil',
+    table: 'Miza',
+    cash: '💵 Gotovina',
+    card: '💳 Kartica',
+    note: '⚠ Opomba',
+    startPreparing: '▶  Začni pripravo',
+    markReady: '✓  Pripravljeno',
+    served: '🍽  Postreženo',
+    swipeHint: 'povleci desno za začetek priprave',
+    lock: 'Zakleni',
+    enterPin: 'Vnesite PIN za dostop do naročil',
+    enterKitchen: 'Vstopi v kuhinjo',
+    checking: 'Preverjam…',
+    incorrectPin: 'Napačen PIN',
+    restaurantNotFound: 'Restavracija ni najdena',
+    noRestaurants: 'Ni najdenih restavracij',
+    tapToEnableSound: '🔔 Tapnite kjerkoli za zvočna opozorila',
+    muteAlerts: 'Utišaj opozorila',
+    unmuteAlerts: 'Vklopi opozorila',
+    cancelOrder: 'Prekliči naročilo',
+    permissionError: 'Napaka dostopa. Dodajte ?r=id_restavracije v URL.',
+    statusDone: 'končano',
+    statusCancelled: 'preklicano',
+    sAgo: (n: number) => `${n}s nazaj`,
+    mAgo: (n: number) => `${n}m nazaj`,
+    hmAgo: (h: number, m: number) => `${h}h ${m}m nazaj`,
+  },
+  en: {
+    kitchenDisplay: 'Kitchen Display',
+    active: '🔥 Active',
+    history: '📋 History',
+    allClear: 'All clear — no active orders',
+    allClearSub: 'New orders will appear here automatically',
+    newOrders: 'New Orders',
+    preparing: 'Preparing',
+    readyToServe: 'Ready to Serve',
+    noHistory: 'No order history yet',
+    table: 'Table',
+    cash: '💵 Cash',
+    card: '💳 Card',
+    note: '⚠ Note',
+    startPreparing: '▶  Start Preparing',
+    markReady: '✓  Mark Ready',
+    served: '🍽  Served',
+    swipeHint: 'swipe right to start preparing',
+    lock: 'Lock',
+    enterPin: 'Enter your PIN to access orders',
+    enterKitchen: 'Enter Kitchen',
+    checking: 'Checking…',
+    incorrectPin: 'Incorrect PIN',
+    restaurantNotFound: 'Restaurant not found',
+    noRestaurants: 'No restaurants found',
+    tapToEnableSound: '🔔 Tap anywhere to enable sound alerts',
+    muteAlerts: 'Mute alerts',
+    unmuteAlerts: 'Unmute alerts',
+    cancelOrder: 'Cancel order',
+    permissionError: 'Permission error. Add ?r=restaurant_id to the URL.',
+    statusDone: 'done',
+    statusCancelled: 'cancelled',
+    sAgo: (n: number) => `${n}s ago`,
+    mAgo: (n: number) => `${n}m ago`,
+    hmAgo: (h: number, m: number) => `${h}h ${m}m ago`,
+  },
+};
+
+function getLang(): Lang {
+  return (localStorage.getItem(LANG_KEY) as Lang) ?? 'sl';
+}
+function saveLang(l: Lang) { localStorage.setItem(LANG_KEY, l); }
 
 // ─── Audio alert (iOS-safe) ───────────────────────────────────────────────────
-// Professional double-chime using sine waves with exponential decay.
-// Built eagerly at module load so play() fires instantly on first gesture.
-// Loops every 4 s while there are unaccepted new orders.
 
 function buildAlarmAudio(): HTMLAudioElement {
   const sampleRate = 44100;
-  // Two chime hits: 880 Hz (A5) at t=0, 1047 Hz (C6) at t=0.35s
   const duration = 1.4;
   const numSamples = Math.floor(sampleRate * duration);
   const buf = new ArrayBuffer(44 + numSamples * 2);
@@ -27,18 +109,17 @@ function buildAlarmAudio(): HTMLAudioElement {
   v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
   v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   w(36, 'data'); v.setUint32(40, numSamples * 2, true);
-
   const chime = (t: number, freq: number, startT: number) => {
     const dt = t - startT;
     if (dt < 0) return 0;
-    // Sine wave with fast attack and smooth exponential decay
     const attack = Math.min(dt / 0.005, 1);
     const decay = Math.exp(-dt * 6);
-    return attack * decay * Math.sin(2 * Math.PI * freq * dt)
-         + attack * decay * 0.3 * Math.sin(2 * Math.PI * freq * 2 * dt)   // 1st harmonic
-         + attack * decay * 0.1 * Math.sin(2 * Math.PI * freq * 3 * dt);  // 2nd harmonic
+    return attack * decay * (
+      Math.sin(2 * Math.PI * freq * dt) +
+      0.3 * Math.sin(2 * Math.PI * freq * 2 * dt) +
+      0.1 * Math.sin(2 * Math.PI * freq * 3 * dt)
+    );
   };
-
   for (let i = 0; i < numSamples; i++) {
     const t = i / sampleRate;
     const sample = (chime(t, 880, 0) + chime(t, 1047, 0.38)) * 26000;
@@ -55,10 +136,14 @@ function buildAlarmAudio(): HTMLAudioElement {
 const alarmAudio = buildAlarmAudio();
 let alarmLoopTimer: ReturnType<typeof setInterval> | null = null;
 
+function isMuted() { return localStorage.getItem(MUTE_KEY) === 'true'; }
+function setMuted(v: boolean) { localStorage.setItem(MUTE_KEY, String(v)); }
+
 function primeAlarm() {
   alarmAudio.play().then(() => { alarmAudio.pause(); alarmAudio.currentTime = 0; }).catch(() => {});
 }
 function playAlarm() {
+  if (isMuted()) return;
   alarmAudio.currentTime = 0;
   alarmAudio.play().catch(() => {});
 }
@@ -73,137 +158,181 @@ function stopAlarmLoop() {
   alarmAudio.currentTime = 0;
 }
 
-function elapsed(ts: number) {
-  const sec = Math.floor((Date.now() - ts) / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  return `${Math.floor(min / 60)}h ${min % 60}m`;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatTime(ts: number) {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function ElapsedTimer({ ts }: { ts: number }) {
+function elapsed(ts: number, t: typeof T['en']) {
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60) return t.sAgo(sec);
+  const min = Math.floor(sec / 60);
+  if (min < 60) return t.mAgo(min);
+  return t.hmAgo(Math.floor(min / 60), min % 60);
+}
+
+function ElapsedTimer({ ts, t }: { ts: number; t: typeof T['en'] }) {
   const [, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 10000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setTick((n) => n + 1), 10000);
+    return () => clearInterval(timer);
   }, []);
   const sec = Math.floor((Date.now() - ts) / 1000);
   const urgent = sec > 900;
   const warn = sec > 600;
   return (
-    <span className={`text-sm font-semibold ${urgent ? 'text-red-500' : warn ? 'text-orange-500' : 'text-gray-400'}`}>
-      {elapsed(ts)}
+    <span className={`text-xs font-bold ${urgent ? 'text-red-500' : warn ? 'text-orange-500' : 'text-gray-400'}`}>
+      {elapsed(ts, t)}
     </span>
   );
 }
 
+// ─── Order Card ───────────────────────────────────────────────────────────────
+
 interface OrderCardProps {
   order: Order;
   onStatusChange: (id: string, status: OrderStatus) => void;
+  t: typeof T['en'];
 }
 
-function OrderCard({ order, onStatusChange }: OrderCardProps) {
+function OrderCard({ order, onStatusChange, t }: OrderCardProps) {
   let items: { name: string; quantity: number; modifiers?: string }[] = [];
   try { items = JSON.parse(order.items); } catch { /* fallback */ }
 
-  const nextStatus: Record<string, { label: string; next: OrderStatus }> = {
-    new: { label: '▶ Start Preparing', next: 'preparing' },
-    preparing: { label: '✓ Mark Ready', next: 'ready' },
-    ready: { label: '🍽 Served', next: 'done' },
-  };
+  const touchStartX = useRef(0);
 
+  const nextStatus: Record<string, { label: string; next: OrderStatus }> = {
+    new: { label: t.startPreparing, next: 'preparing' },
+    preparing: { label: t.markReady, next: 'ready' },
+    ready: { label: t.served, next: 'done' },
+  };
   const action = nextStatus[order.status];
 
-  const cardStyle = {
-    new: 'border-orange-400 bg-white shadow-orange-100',
-    preparing: 'border-blue-400 bg-blue-50 shadow-blue-100',
-    ready: 'border-green-400 bg-green-50 shadow-green-100',
+  const cardStyle: Record<string, string> = {
+    new: 'border-orange-400 bg-white',
+    preparing: 'border-blue-400 bg-white',
+    ready: 'border-green-400 bg-white',
     done: 'border-gray-200 bg-gray-50',
     cancelled: 'border-gray-200 bg-gray-50',
-  }[order.status] ?? 'border-gray-200 bg-white';
-
-  const actionStyle: Record<string, string> = {
+  };
+  const btnStyle: Record<string, string> = {
     new: 'bg-orange-500 hover:bg-orange-600 text-white',
     preparing: 'bg-blue-500 hover:bg-blue-600 text-white',
     ready: 'bg-green-500 hover:bg-green-600 text-white',
   };
-  const btnStyle = actionStyle[order.status] ?? '';
+
+  const isNew = order.status === 'new';
 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.96 }}
-      className={`rounded-2xl border-2 shadow-md mb-4 overflow-hidden ${cardStyle}`}
+      exit={{ opacity: 0, scale: 0.97 }}
+      onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+      onTouchEnd={(e) => {
+        const dx = e.changedTouches[0].clientX - touchStartX.current;
+        if (dx > 70 && action) onStatusChange(order.id, action.next);
+      }}
+      className={`rounded-2xl border-2 mb-3 overflow-hidden ${cardStyle[order.status] ?? 'border-gray-200 bg-white'} shadow-sm`}
     >
-      {/* Card Header */}
-      <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-3">
-        {/* Left: order number + table */}
-        <div className="flex items-center gap-3">
-          <span className="text-3xl font-black text-gray-900 leading-none">
+      {/* Animated accent strip — only on new orders */}
+      {isNew && <div className="h-0.5 w-full bg-orange-400 animate-pulse" />}
+
+      {/* ── Top row: order# + elapsed · payment ── */}
+      <div className="px-4 pt-3 pb-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-black text-gray-400 tabular-nums">
             #{String(order.orderNumber).padStart(3, '0')}
           </span>
-          {order.tableNumber != null && (
-            <div className="bg-gray-900 text-white rounded-xl px-3 py-1.5 text-center">
-              <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 leading-none mb-0.5">Table</p>
-              <p className="text-2xl font-black leading-none">{order.tableNumber}</p>
-            </div>
-          )}
+          <span className="text-gray-200 text-xs">·</span>
+          <ElapsedTimer ts={order.timestamp} t={t} />
         </div>
+        <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wide ${
+          order.paymentType === 'cash' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+        }`}>
+          {order.paymentType === 'cash' ? t.cash : t.card}
+        </span>
+      </div>
 
-        {/* Right: payment + timer */}
-        <div className="flex flex-col items-end gap-1.5">
-          <span className={`text-sm font-black px-3 py-1 rounded-lg uppercase tracking-wide ${
-            order.paymentType === 'cash'
-              ? 'bg-amber-400 text-amber-900'
-              : 'bg-blue-500 text-white'
+      {/* ── Table number — centered hero ── */}
+      {order.tableNumber != null && (
+        <div className="px-4 pb-3 flex justify-center">
+          <div className={`rounded-2xl px-10 py-2.5 text-center border ${
+            isNew ? 'bg-orange-50 border-orange-200' :
+            order.status === 'preparing' ? 'bg-blue-50 border-blue-200' :
+            order.status === 'ready' ? 'bg-green-50 border-green-200' :
+            'bg-gray-50 border-gray-200'
           }`}>
-            {order.paymentType === 'cash' ? '💵 Cash' : '💳 Card'}
-          </span>
-          <ElapsedTimer ts={order.timestamp} />
-        </div>
-      </div>
-
-      {/* Divider */}
-      <div className="mx-4 border-t border-gray-100" />
-
-      {/* Items */}
-      <div className="px-4 py-3 space-y-2">
-        {items.length > 0 ? items.map((item, i) => (
-          <div key={i} className="flex items-start gap-3">
-            <span className="bg-gray-900 text-white text-sm font-black w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0">
-              {item.quantity}
-            </span>
-            <div>
-              <p className="text-gray-900 font-semibold text-base leading-tight">{item.name}</p>
-              {item.modifiers && <p className="text-xs text-gray-400 mt-0.5">{item.modifiers}</p>}
-            </div>
+            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-400 leading-none mb-1">
+              {t.table}
+            </p>
+            <p className={`text-5xl font-black leading-none ${
+              isNew ? 'text-orange-500' :
+              order.status === 'preparing' ? 'text-blue-500' :
+              order.status === 'ready' ? 'text-green-600' :
+              'text-gray-700'
+            }`}>
+              {order.tableNumber}
+            </p>
           </div>
-        )) : (
-          <p className="text-gray-700 text-base">{order.itemsReadable}</p>
-        )}
-      </div>
-
-      {/* Note */}
-      {order.note && (
-        <div className="mx-4 mb-3 bg-yellow-50 border border-yellow-300 rounded-xl px-3 py-2">
-          <p className="text-xs font-bold text-yellow-700 uppercase tracking-wide mb-0.5">⚠ Note</p>
-          <p className="text-sm text-yellow-900 font-medium">{order.note}</p>
         </div>
       )}
 
-      {/* Footer */}
-      <div className="px-4 pb-4 flex items-center justify-between gap-3">
-        <span className="text-xl font-black text-gray-900">€{order.totalPrice.toFixed(2)}</span>
-        {action && (
-          <button
-            onClick={() => onStatusChange(order.id, action.next)}
-            className={`flex-1 py-3.5 rounded-xl text-base font-black tracking-wide transition-all active:scale-[0.98] shadow-sm ${btnStyle}`}
-          >
-            {action.label}
-          </button>
+      {/* ── Items ── */}
+      <div className="border-t border-gray-100 mx-3" />
+      <div className="px-4 py-2.5 space-y-1.5">
+        {items.length > 0 ? items.map((item, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <span className="text-xs font-black text-orange-500 w-6 flex-shrink-0 pt-0.5 tabular-nums">
+              ×{item.quantity}
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-gray-900 font-semibold text-sm leading-snug">{item.name}</p>
+              {item.modifiers && (
+                <p className="text-[11px] text-gray-400 mt-0.5 leading-tight">{item.modifiers}</p>
+              )}
+            </div>
+          </div>
+        )) : (
+          <p className="text-gray-600 text-sm">{order.itemsReadable}</p>
         )}
+      </div>
+
+      {/* ── Note ── */}
+      {order.note && (
+        <div className="mx-4 mb-2.5 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 flex items-start gap-2">
+          <span className="text-yellow-500 text-xs mt-0.5 flex-shrink-0">⚠</span>
+          <p className="text-xs text-yellow-800 font-medium leading-snug">{order.note}</p>
+        </div>
+      )}
+
+      {/* ── Footer: price + action + cancel ── */}
+      <div className="border-t border-gray-100 mx-3" />
+      <div className="px-4 py-2.5 flex items-center gap-2">
+        <span className="text-sm font-black text-gray-700 tabular-nums w-16 flex-shrink-0">
+          €{order.totalPrice.toFixed(2)}
+        </span>
+        <div className="flex-1 flex gap-2">
+          {action && (
+            <button
+              onClick={() => onStatusChange(order.id, action.next)}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-black tracking-wide transition-all active:scale-[0.98] ${btnStyle[order.status] ?? ''}`}
+            >
+              {action.label}
+            </button>
+          )}
+          {(order.status === 'new' || order.status === 'preparing') && (
+            <button
+              onClick={() => onStatusChange(order.id, 'cancelled')}
+              className="w-10 h-10 rounded-xl bg-gray-100 hover:bg-red-100 text-gray-400 hover:text-red-500 font-bold text-sm transition-all flex items-center justify-center flex-shrink-0"
+              title={t.cancelOrder}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
     </motion.div>
   );
@@ -215,78 +344,99 @@ interface PinEntryProps {
   restaurantId: string | null;
   onSuccess: (restaurantId: string | null, restaurantName: string) => void;
   onAudioUnlock: () => void;
+  t: typeof T['en'];
 }
 
-function PinEntry({ restaurantId, onSuccess, onAudioUnlock }: PinEntryProps) {
+function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
+  const [logo, setLogo] = useState<string | null>(null);
+  const [logoLoading, setLogoLoading] = useState(!!restaurantId);
+  const [restaurantName, setRestaurantName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!restaurantId) return;
+    get(refs.restaurant(restaurantId)).then((snap) => {
+      if (snap.exists()) {
+        const r = snap.val() as Restaurant;
+        if (r.logo) setLogo(r.logo);
+        if (r.name) setRestaurantName(r.name);
+      }
+      setLogoLoading(false);
+    }).catch(() => { setLogoLoading(false); });
+  }, [restaurantId]);
 
   async function check() {
-    if (pin === MASTER_PIN) {
-      onSuccess(null, 'All restaurants');
-      return;
-    }
+    if (pin === MASTER_PIN) { onSuccess(null, 'All restaurants'); return; }
     setChecking(true);
     try {
       if (restaurantId) {
         const snap = await get(refs.restaurant(restaurantId));
         if (snap.exists()) {
           const r = snap.val() as Restaurant;
-          if (r.kitchenPin === pin) {
-            onSuccess(restaurantId, r.name);
-          } else {
-            setError('Incorrect PIN');
-          }
-        } else {
-          setError('Restaurant not found');
-        }
+          if (r.kitchenPin === pin) { onSuccess(restaurantId, r.name); }
+          else setError(t.incorrectPin);
+        } else setError(t.restaurantNotFound);
       } else {
         const snap = await get(refs.restaurants());
         if (snap.exists()) {
           let found = false;
           snap.forEach((child) => {
             const r = child.val() as Restaurant;
-            if (r.kitchenPin === pin) {
-              onSuccess(child.key!, r.name);
-              found = true;
-            }
+            if (r.kitchenPin === pin) { onSuccess(child.key!, r.name); found = true; }
           });
-          if (!found) setError('Incorrect PIN');
-        } else {
-          setError('No restaurants found');
-        }
+          if (!found) setError(t.incorrectPin);
+        } else setError(t.noRestaurants);
       }
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Permission error. Try specifying restaurant ID in URL (e.g. ?r=restaurant_id).');
+      setError(t.permissionError);
     }
     setChecking(false);
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 px-6">
+    <div
+      className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-6"
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+    >
       <div className="w-full max-w-xs">
-        <h1 className="text-white text-2xl font-bold text-center mb-2">Kitchen</h1>
-        <p className="text-gray-400 text-center text-sm mb-8">Enter your PIN to access orders</p>
+        <div className="flex items-center justify-center mb-6 h-24">
+          {logoLoading ? (
+            // Skeleton — same size as logo, no food icon flash
+            <div className="h-24 w-44 bg-gray-200 rounded-2xl animate-pulse" />
+          ) : logo ? (
+            <img
+              src={logo}
+              alt={restaurantName ?? 'Restaurant'}
+              className="h-24 w-auto max-w-[200px] object-contain rounded-2xl"
+            />
+          ) : (
+            <div className="w-16 h-16 bg-orange-500 rounded-2xl flex items-center justify-center text-3xl">🍳</div>
+          )}
+        </div>
+        <h1 className="text-gray-900 text-3xl font-black text-center mb-1">
+          {restaurantName ?? 'Kitchen'}
+        </h1>
+        <p className="text-gray-500 text-center text-sm mb-8">{t.enterPin}</p>
         <input
           type="password"
           inputMode="numeric"
           maxLength={6}
-          placeholder="PIN"
+          placeholder="● ● ● ●"
           value={pin}
           onChange={(e) => { setPin(e.target.value); setError(''); }}
           onKeyDown={(e) => e.key === 'Enter' && pin && check()}
-          className="w-full bg-gray-800 text-white text-center text-3xl font-bold tracking-widest py-4 rounded-2xl outline-none border-2 border-gray-700 focus:border-orange-500 transition-colors mb-4"
+          className="w-full bg-white text-gray-900 text-center text-3xl font-bold tracking-widest py-5 rounded-2xl outline-none border-2 border-gray-200 focus:border-orange-500 transition-colors mb-4 shadow-sm"
         />
-        {error && <p className="text-red-400 text-sm text-center mb-3">{error}</p>}
+        {error && <p className="text-red-500 text-sm text-center mb-3">{error}</p>}
         <button
           onPointerDown={() => { primeAlarm(); onAudioUnlock(); }}
           onClick={check}
           disabled={!pin || checking}
-          className="w-full bg-orange-500 text-white font-semibold py-4 rounded-2xl disabled:opacity-40"
+          className="w-full bg-orange-500 text-white font-black text-lg py-4 rounded-2xl disabled:opacity-40 transition-all active:scale-[0.98] shadow-sm"
         >
-          {checking ? 'Checking...' : 'Enter'}
+          {checking ? t.checking : t.enterKitchen}
         </button>
       </div>
     </div>
@@ -304,7 +454,11 @@ export default function KitchenPage() {
   const [history, setHistory] = useState<Order[]>([]);
   const [tab, setTab] = useState<'active' | 'history'>('active');
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [muted, setMutedState] = useState(() => isMuted());
+  const [lang, setLangState] = useState<Lang>(getLang);
   const prevNewCount = useRef(0);
+
+  const t = T[lang];
 
   function unlockAudio() {
     if (audioUnlocked) return;
@@ -312,19 +466,33 @@ export default function KitchenPage() {
     setAudioUnlocked(true);
   }
 
-  // ── Screen Wake Lock — keeps display on while kitchen is open ───────────────
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    setMutedState(next);
+    if (!next) {
+      primeAlarm();
+      setTimeout(playAlarm, 100);
+    } else {
+      stopAlarmLoop();
+    }
+  }
+
+  function switchLang(l: Lang) {
+    saveLang(l);
+    setLangState(l);
+  }
+
+  // ── Screen Wake Lock ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!auth) return;
     let sentinel: WakeLockSentinel | null = null;
     async function acquire() {
       try {
-        if ('wakeLock' in navigator) {
-          sentinel = await (navigator as any).wakeLock.request('screen');
-        }
-      } catch { /* device may not support it */ }
+        if ('wakeLock' in navigator) sentinel = await (navigator as any).wakeLock.request('screen');
+      } catch { /* unsupported */ }
     }
     acquire();
-    // iOS releases the lock when the app is backgrounded — re-acquire on return
     function onVisible() { if (document.visibilityState === 'visible') acquire(); }
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -333,12 +501,7 @@ export default function KitchenPage() {
     };
   }, [auth]);
 
-  // Tab-title cue for kitchen staff who keep the page in a background tab:
-  // prefix the active-order count so the tab acts like a Gmail-style badge.
-  const activeCount = orders.length;
-  const titlePrefix = activeCount > 0 ? `(${activeCount}) ` : '';
-  useDocumentTitle(auth ? `${titlePrefix}Kitchen · ${auth.name}` : 'Kitchen');
-
+  // ── Orders subscription ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!auth) return;
     const ref = auth.restaurantId ? refs.restaurantOrders(auth.restaurantId) : refs.orders();
@@ -355,23 +518,45 @@ export default function KitchenPage() {
       });
       active.sort((a, b) => a.timestamp - b.timestamp);
       done.sort((a, b) => b.timestamp - a.timestamp);
-
-      const newCount = active.filter((o) => o.status === 'new').length;
-      if (newCount > 0) {
-        startAlarmLoop();
-      } else {
-        stopAlarmLoop();
-      }
-      prevNewCount.current = newCount;
-
+      const nc = active.filter((o) => o.status === 'new').length;
+      if (nc > 0) startAlarmLoop(); else stopAlarmLoop();
+      prevNewCount.current = nc;
       setOrders(active);
       setHistory(done.slice(0, 50));
     });
     return () => unsub();
   }, [auth]);
 
+  // ── Lock body scroll (must be before early return) ──────────────────────────
+  useEffect(() => {
+    if (!auth) return;
+    const prevBody = document.body.style.cssText;
+    const prevHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    document.body.style.height = '100%';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.cssText = prevBody;
+      document.documentElement.style.overflow = prevHtml;
+    };
+  }, [auth]);
+
+  const activeCount = orders.length;
+  const newCount = orders.filter((o) => o.status === 'new').length;
+  const titlePrefix = activeCount > 0 ? `(${activeCount}) ` : '';
+  useDocumentTitle(auth ? `${titlePrefix}${t.kitchenDisplay} · ${auth.name}` : t.kitchenDisplay);
+
   if (!auth) {
-    return <PinEntry restaurantId={restaurantId} onSuccess={(id, name) => setAuth({ restaurantId: id, name })} onAudioUnlock={() => setAudioUnlocked(true)} />;
+    return (
+      <PinEntry
+        restaurantId={restaurantId}
+        onSuccess={(id, name) => setAuth({ restaurantId: id, name })}
+        onAudioUnlock={() => setAudioUnlocked(true)}
+        t={t}
+      />
+    );
   }
 
   const newOrders = orders.filter((o) => o.status === 'new');
@@ -379,138 +564,205 @@ export default function KitchenPage() {
   const readyOrders = orders.filter((o) => o.status === 'ready');
 
   return (
-    <div className="min-h-screen bg-gray-100" onPointerDown={unlockAudio}>
-
-      {/* iOS audio unlock banner — disappears after first tap */}
+    <div
+      className="flex flex-col bg-gray-50 text-gray-900"
+      style={{ height: '100dvh', overflow: 'hidden' }}
+      onPointerDown={unlockAudio}
+    >
+      {/* Audio unlock banner */}
       {!audioUnlocked && (
-        <div className="bg-orange-500 text-white text-sm font-bold text-center py-2 px-4 cursor-pointer">
-          🔔 Tap anywhere to enable sound alerts
+        <div className="bg-orange-500 text-white text-sm font-bold text-center py-2 px-4 flex-shrink-0">
+          {t.tapToEnableSound}
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-gray-900 text-white px-4 py-4 relative flex items-center justify-center">
-        {/* Center: restaurant name */}
-        <div className="text-center">
-          <h1 className="font-black text-2xl leading-tight tracking-tight">{auth.name}</h1>
-          <p className="text-orange-400 text-xs font-semibold uppercase tracking-widest mt-0.5">Kitchen Display</p>
-        </div>
-        {/* Right: active badge + lock */}
-        <div className="absolute right-4 flex items-center gap-2">
-          {orders.length > 0 && (
-            <div className="bg-orange-500 text-white text-sm font-black px-3 py-1.5 rounded-xl">
-              {orders.length} active
+      {/* ── Header ── */}
+      {/* paddingTop: safe-area-inset-top pushes content below the iOS status bar in PWA mode */}
+      <div
+        className="bg-white border-b border-gray-200 flex-shrink-0 shadow-sm"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      >
+        <div
+          className="flex items-center py-3 pl-5"
+          style={{ paddingRight: 'max(1.5rem, env(safe-area-inset-right, 1.5rem))' }}
+        >
+          {/* Left: empty spacer — mirrors right side so name stays centred */}
+          <div className="flex-1" />
+
+          {/* Center: restaurant name */}
+          <div className="flex-none text-center px-3">
+            <h1 className="font-black text-xl leading-tight tracking-tight text-gray-900">{auth.name}</h1>
+            <p className="text-orange-500 text-[10px] font-bold uppercase tracking-widest">{t.kitchenDisplay}</p>
+          </div>
+
+          {/* Right: lang switcher + bell + lock */}
+          <div className="flex-1 flex items-center justify-end gap-2">
+            {/* SLO | ENG pill */}
+            <div className="flex items-center bg-gray-100 rounded-xl p-0.5 border border-gray-200">
+              <button
+                onClick={() => switchLang('sl')}
+                className={`px-2.5 py-1.5 rounded-[10px] text-xs font-black transition-all ${
+                  lang === 'sl' ? 'bg-white text-orange-500 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                SLO
+              </button>
+              <button
+                onClick={() => switchLang('en')}
+                className={`px-2.5 py-1.5 rounded-[10px] text-xs font-black transition-all ${
+                  lang === 'en' ? 'bg-white text-orange-500 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                ENG
+              </button>
             </div>
-          )}
-          <button
-            onClick={() => { stopAlarmLoop(); setAuth(null); }}
-            className="text-gray-400 text-xs px-3 py-2 rounded-lg hover:bg-gray-800 border border-gray-700"
-          >
-            Lock
-          </button>
+
+            {/* Bell */}
+            <button
+              onClick={toggleMute}
+              title={muted ? t.unmuteAlerts : t.muteAlerts}
+              className={`h-9 w-9 rounded-xl flex items-center justify-center text-lg transition-colors border ${
+                muted
+                  ? 'bg-gray-100 border-gray-200 text-gray-400'
+                  : 'bg-orange-50 border-orange-200 text-orange-500'
+              }`}
+            >
+              {muted ? '🔕' : '🔔'}
+            </button>
+
+            {/* Lock */}
+            <button
+              onClick={() => { stopAlarmLoop(); setAuth(null); }}
+              className="h-9 px-3 rounded-xl bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-600 text-xs font-bold transition-colors flex items-center"
+            >
+              {t.lock}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex bg-gray-800">
-        {(['active', 'history'] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 py-3 text-sm font-bold transition-colors ${
-              tab === t
-                ? 'text-orange-400 border-b-2 border-orange-400 bg-gray-900'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {t === 'active' ? `🔥 Active (${orders.length})` : '📋 History'}
-          </button>
-        ))}
+      {/* ── Tabs ── */}
+      <div className="flex bg-white border-b border-gray-200 flex-shrink-0">
+        <button
+          onClick={() => setTab('active')}
+          className={`flex-1 py-3 text-sm font-bold transition-colors ${
+            tab === 'active' ? 'text-orange-500 border-b-2 border-orange-500' : 'text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          <span className="inline-flex items-center justify-center gap-1.5">
+            {t.active}
+            {newCount > 0 && (
+              <span className="bg-red-500 text-white text-[10px] font-black min-w-[18px] h-[18px] rounded-full inline-flex items-center justify-center px-1 animate-pulse">
+                {newCount}
+              </span>
+            )}
+          </span>
+        </button>
+        <button
+          onClick={() => setTab('history')}
+          className={`flex-1 py-3 text-sm font-bold transition-colors ${
+            tab === 'history' ? 'text-orange-500 border-b-2 border-orange-500' : 'text-gray-400 hover:text-gray-600'
+          }`}
+        >
+          {t.history}
+        </button>
       </div>
 
-      <div className="p-4 max-w-2xl mx-auto">
-        {tab === 'active' ? (
-          <>
-            {orders.length === 0 ? (
-              <div className="text-center py-20 text-gray-400">
+      {/* ── Scrollable content ── */}
+      <div className="flex-1 overflow-y-auto overscroll-none">
+        <div className="p-4 max-w-2xl mx-auto">
+          {tab === 'active' ? (
+            orders.length === 0 ? (
+              <div className="text-center py-24">
                 <p className="text-5xl mb-4">🍽</p>
-                <p className="text-lg font-semibold">All clear — no active orders</p>
-                <p className="text-sm mt-1 text-gray-500">New orders will appear here automatically</p>
+                <p className="text-lg font-bold text-gray-600">{t.allClear}</p>
+                <p className="text-sm mt-2 text-gray-400">{t.allClearSub}</p>
               </div>
             ) : (
               <>
                 {newOrders.length > 0 && (
-                  <div className="mb-4">
+                  <div className="mb-5">
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse" />
-                      <p className="text-sm font-black text-orange-500 uppercase tracking-widest">New Orders ({newOrders.length})</p>
+                      <p className="text-xs font-black text-orange-500 uppercase tracking-widest">
+                        {t.newOrders} ({newOrders.length})
+                      </p>
                     </div>
                     <AnimatePresence>
                       {newOrders.map((o) => (
-                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} />
+                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} t={t} />
                       ))}
                     </AnimatePresence>
                   </div>
                 )}
                 {preparingOrders.length > 0 && (
-                  <div className="mb-4">
+                  <div className="mb-5">
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                      <p className="text-sm font-black text-blue-500 uppercase tracking-widest">Preparing ({preparingOrders.length})</p>
+                      <p className="text-xs font-black text-blue-500 uppercase tracking-widest">
+                        {t.preparing} ({preparingOrders.length})
+                      </p>
                     </div>
                     <AnimatePresence>
                       {preparingOrders.map((o) => (
-                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} />
+                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} t={t} />
                       ))}
                     </AnimatePresence>
                   </div>
                 )}
                 {readyOrders.length > 0 && (
-                  <div className="mb-4">
+                  <div className="mb-5">
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                      <p className="text-sm font-black text-green-500 uppercase tracking-widest">Ready to Serve ({readyOrders.length})</p>
+                      <p className="text-xs font-black text-green-600 uppercase tracking-widest">
+                        {t.readyToServe} ({readyOrders.length})
+                      </p>
                     </div>
                     <AnimatePresence>
                       {readyOrders.map((o) => (
-                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} />
+                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} t={t} />
                       ))}
                     </AnimatePresence>
                   </div>
                 )}
               </>
-            )}
-          </>
-        ) : (
-          <>
-            {history.length === 0 ? (
+            )
+          ) : (
+            history.length === 0 ? (
               <div className="text-center py-16 text-gray-400">
                 <p className="text-4xl mb-3">📋</p>
-                <p>No order history yet</p>
+                <p className="font-semibold">{t.noHistory}</p>
               </div>
             ) : (
               <div className="space-y-3">
                 {history.map((o) => (
-                  <div key={o.id} className="bg-white rounded-2xl p-4 border border-gray-100">
+                  <div key={o.id} className="bg-white rounded-2xl p-4 border border-gray-200 shadow-sm">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <span className="text-lg font-black text-gray-800">#{String(o.orderNumber).padStart(3, '0')}</span>
+                        <span className="text-lg font-black text-gray-900">#{String(o.orderNumber).padStart(3, '0')}</span>
                         {o.tableNumber != null && (
-                          <span className="bg-gray-100 text-gray-700 text-xs font-bold px-2 py-1 rounded-lg">Table {o.tableNumber}</span>
+                          <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded-lg">
+                            {t.table} {o.tableNumber}
+                          </span>
                         )}
                       </div>
-                      <span className={`text-xs px-2.5 py-1 rounded-lg font-bold uppercase ${
-                        o.status === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                      }`}>{o.status}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">{formatTime(o.timestamp)}</span>
+                        <span className={`text-xs px-2.5 py-1 rounded-lg font-bold uppercase ${
+                          o.status === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
+                        }`}>
+                          {o.status === 'done' ? t.statusDone : t.statusCancelled}
+                        </span>
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-600">{o.itemsReadable}</p>
+                    <p className="text-sm text-gray-500">{o.itemsReadable}</p>
                     <p className="text-base font-black text-gray-900 mt-1">€{o.totalPrice.toFixed(2)}</p>
                   </div>
                 ))}
               </div>
-            )}
-          </>
-        )}
+            )
+          )}
+        </div>
       </div>
     </div>
   );
