@@ -714,24 +714,27 @@ export default function OrderPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
 
+      {/* ── Language switcher — fixed top-right, always visible ── */}
+      <div className="fixed top-3 right-4 z-20">
+        <LangPill lang={lang} onChange={switchLang} />
+      </div>
+
       {/* ── Hero ── */}
-      <div className="bg-gradient-to-b from-orange-500 to-orange-600 px-4 pt-10 pb-10 text-center">
+      <div className="bg-white border-b border-gray-100 px-4 pt-10 pb-8 text-center shadow-sm">
         {restaurant.logo && (
-          <div className="w-20 h-20 rounded-2xl overflow-hidden bg-white shadow-xl mx-auto mb-4 ring-4 ring-white/25">
+          <div className="w-20 h-20 rounded-2xl overflow-hidden bg-gray-100 shadow-md mx-auto mb-4">
             <img src={restaurant.logo} alt={restaurant.name} className="w-full h-full object-cover" />
           </div>
         )}
-        <h1 className="text-2xl font-black text-white leading-tight">{restaurant.name}</h1>
+        <h1 className="text-2xl font-black text-gray-900 leading-tight">{restaurant.name}</h1>
         {tableNumber != null && (
-          <div className="inline-flex items-center gap-1.5 bg-white/20 text-white text-sm font-bold px-4 py-1.5 rounded-full mt-3">
-            <span className="opacity-80">{t.table}</span>
-            <span className="text-base font-black">{tableNumber}</span>
+          <div className="inline-flex flex-col items-center mt-4 bg-orange-50 border-2 border-orange-200 rounded-2xl px-8 py-3">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 leading-none mb-1">
+              {t.table}
+            </span>
+            <span className="text-4xl font-black text-orange-500 leading-none">{tableNumber}</span>
           </div>
         )}
-        {/* Language switcher — in hero so it doesn't crowd the category bar */}
-        <div className="mt-4">
-          <LangPill lang={lang} onChange={switchLang} />
-        </div>
       </div>
 
       {/* ── Sticky category bar + lang switcher ── */}
