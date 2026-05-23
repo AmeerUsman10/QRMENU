@@ -401,7 +401,6 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
-  const [visible, setVisible] = useState(false);
 
   // Initialise instantly from localStorage cache so logo/name show with zero delay
   const cached = restaurantId ? getCachedRestaurant(restaurantId) : null;
@@ -409,14 +408,6 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   const [restaurantName, setRestaurantName] = useState<string | null>(cached?.name ?? null);
   // Only show skeleton if nothing is cached yet (true first-ever load)
   const [logoLoading, setLogoLoading] = useState(!cached && !!restaurantId);
-
-  useEffect(() => {
-    // 80 ms gives iOS PWA enough time to fully resolve safe-area insets and
-    // flex centering before we reveal the content. requestAnimationFrame fires
-    // too early (before layout is settled) on iOS WebKit.
-    const timer = setTimeout(() => setVisible(true), 80);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -463,11 +454,7 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-6"
-      style={{
-        paddingTop: 'env(safe-area-inset-top)',
-        opacity: visible ? 1 : 0,
-        transition: 'opacity 0.18s ease',
-      }}
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
     >
       <div className="w-full max-w-xs">
         <div className="flex items-center justify-center mb-6 h-24">
@@ -517,6 +504,13 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
 export default function KitchenPage() {
   const [searchParams] = useSearchParams();
   const restaurantId = searchParams.get('r');
+
+  // Blank-screen guard: hold off rendering any content for 120 ms so that iOS
+  // PWA has time to resolve safe-area insets and flex layout before anything is
+  // painted. This eliminates the bottom-right corner flash on "Add to Home Screen"
+  // launch. The Suspense fallback is a matching bg-gray-50 div, so the user sees
+  // an unbroken gray screen → PIN page, with zero visible transition artefacts.
+  const [ready, setReady] = useState(false);
 
   const [auth, setAuth] = useState<{ restaurantId: string | null; name: string } | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -573,6 +567,12 @@ export default function KitchenPage() {
     saveLang(l);
     setLangState(l);
   }
+
+  // ── Ready guard (120 ms blank screen for iOS PWA layout to settle) ─────────
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 120);
+    return () => clearTimeout(t);
+  }, []);
 
   // ── Screen Wake Lock ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -638,6 +638,10 @@ export default function KitchenPage() {
   const newCount = orders.filter((o) => o.status === 'new').length;
   const titlePrefix = activeCount > 0 ? `(${activeCount}) ` : '';
   useDocumentTitle(auth ? `${titlePrefix}${t.kitchenDisplay} · ${auth.name}` : t.kitchenDisplay);
+
+  // Hold until layout is settled — renders a plain gray screen that is visually
+  // identical to the Suspense fallback, so there is no visible transition.
+  if (!ready) return <div className="min-h-screen bg-gray-50" />;
 
   if (!auth) {
     return (
