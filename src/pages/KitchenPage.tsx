@@ -8,6 +8,59 @@ import { useSearchParams } from 'react-router-dom';
 
 const MASTER_PIN = '0000';
 
+// ─── Audio alert (iOS-safe) ───────────────────────────────────────────────────
+// Generates a WAV data URL at runtime — no asset file needed.
+// The audio element is unlocked during PIN entry (user gesture) so iOS Safari
+// allows programmatic play() calls after that.
+
+function generateAlarmDataUrl(): string {
+  const sampleRate = 22050;
+  const duration = 1.5;
+  const numSamples = Math.floor(sampleRate * duration);
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+  const write = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+  write(0, 'RIFF'); view.setUint32(4, 36 + numSamples * 2, true);
+  write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  write(36, 'data'); view.setUint32(40, numSamples * 2, true);
+  const pulseLen = Math.floor(sampleRate * 0.4);
+  const gapLen = Math.floor(sampleRate * 0.1);
+  for (let i = 0; i < numSamples; i++) {
+    const pos = i % (pulseLen + gapLen);
+    let sample = 0;
+    if (pos < pulseLen) {
+      const freq = pos < pulseLen / 2 ? 1200 : 900;
+      sample = Math.sign(Math.sin(2 * Math.PI * freq * i / sampleRate)) * 28000;
+    }
+    view.setInt16(44 + i * 2, sample, true);
+  }
+  const bytes = new Uint8Array(buffer);
+  let bin = '';
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
+
+let _alarmAudio: HTMLAudioElement | null = null;
+function getAlarmAudio(): HTMLAudioElement {
+  if (!_alarmAudio) {
+    _alarmAudio = new Audio(generateAlarmDataUrl());
+    _alarmAudio.volume = 1.0;
+  }
+  return _alarmAudio;
+}
+function primeAlarm() {
+  const a = getAlarmAudio();
+  a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+}
+function playAlarm() {
+  const a = getAlarmAudio();
+  a.currentTime = 0;
+  a.play().catch(() => {});
+}
+
 function elapsed(ts: number) {
   const sec = Math.floor((Date.now() - ts) / 1000);
   if (sec < 60) return `${sec}s`;
@@ -143,6 +196,7 @@ function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
   const [checking, setChecking] = useState(false);
 
   async function check() {
+    primeAlarm(); // unlock audio on iOS during this user gesture
     if (pin === MASTER_PIN) {
       onSuccess(null, 'All restaurants');
       return;
@@ -223,7 +277,6 @@ export default function KitchenPage() {
   const [history, setHistory] = useState<Order[]>([]);
   const [tab, setTab] = useState<'active' | 'history'>('active');
   const prevNewCount = useRef(0);
-  const bellRef = useRef<HTMLAudioElement | null>(null);
 
   // Tab-title cue for kitchen staff who keep the page in a background tab:
   // prefix the active-order count so the tab acts like a Gmail-style badge.
@@ -250,7 +303,7 @@ export default function KitchenPage() {
 
       const newCount = active.filter((o) => o.status === 'new').length;
       if (newCount > prevNewCount.current) {
-        bellRef.current?.play().catch(() => {});
+        playAlarm();
       }
       prevNewCount.current = newCount;
 
@@ -270,8 +323,6 @@ export default function KitchenPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Preload bell sound (silent fallback) */}
-      <audio ref={bellRef} src="/bell.mp3" preload="auto" />
 
       {/* Header */}
       <div className="bg-gray-900 text-white px-4 py-4 flex items-center justify-between">
