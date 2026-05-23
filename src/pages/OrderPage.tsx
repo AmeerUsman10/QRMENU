@@ -4,7 +4,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { X, Plus, Minus, UtensilsCrossed, CheckCircle } from 'lucide-react';
 import { onValue } from 'firebase/database';
 import { refs, placeOrder } from '../lib/firebase';
-import { createCheckoutSession } from '../lib/stripe';
 import { useCartStore } from '../store/cartStore';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { OrderPageSkeleton } from '../components/Skeleton';
@@ -42,6 +41,7 @@ const T = {
     cash: '💵 Gotovina',
     card: '💳 Kartica',
     cardHint: 'Sprejemamo Apple Pay in Google Pay',
+    cardComingSoon: 'Plačilo s kartico še ni aktivirano. Kmalu na voljo.',
     orderSummary: 'Povzetek naročila',
     back: 'Nazaj',
     placeOrder: 'Oddaj naročilo',
@@ -81,6 +81,7 @@ const T = {
     cash: '💵 Cash',
     card: '💳 Card',
     cardHint: 'Apple Pay & Google Pay accepted',
+    cardComingSoon: 'Card payment not activated yet. Coming soon.',
     orderSummary: 'Order summary',
     back: 'Back',
     placeOrder: 'Place order',
@@ -332,15 +333,15 @@ function CartSheet({ onClose, restaurant, tableNumber, t }: CartSheetProps) {
   const [formError, setFormError] = useState('');
 
   async function handlePlace() {
-    if (!form.name.trim()) { setFormError(t.nameRequired); return; }
+    if (form.payment === 'card') return; // card not activated — button is disabled
     setPlacing(true);
     try {
       const orderPayload = {
         restaurantId: restaurant.id,
         restaurantName: restaurant.name,
         tableNumber,
-        customerName: form.name.trim(),
-        customerPhone: form.phone.trim() || undefined,
+        customerName: '',
+        customerPhone: undefined,
         items: JSON.stringify(items),
         itemsReadable: itemsReadable(),
         totalPrice: total(),
@@ -349,23 +350,6 @@ function CartSheet({ onClose, restaurant, tableNumber, t }: CartSheetProps) {
         note: form.note.trim() || undefined,
         timestamp: Date.now(),
       };
-
-      if (form.payment === 'card') {
-        const { orderId } = await placeOrder({ ...orderPayload, status: 'new' });
-        const successUrl = `${window.location.origin}/order/success?order_id=${orderId}`;
-        const cancelUrl = `${window.location.origin}/order?r=${restaurant.id}${tableNumber != null ? `&t=${tableNumber}` : ''}`;
-        const { url } = await createCheckoutSession({
-          restaurantId: restaurant.id,
-          orderId,
-          items: items.map((i) => ({ name: i.name, price: i.price, quantity: i.quantity })),
-          tableNumber,
-          successUrl,
-          cancelUrl,
-        });
-        clearCart();
-        window.location.href = url;
-        return;
-      }
 
       const { orderId } = await placeOrder(orderPayload);
       clearCart();
@@ -457,38 +441,13 @@ function CartSheet({ onClose, restaurant, tableNumber, t }: CartSheetProps) {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Name */}
-              <div>
-                <label className="block text-sm font-black text-gray-700 mb-1.5">
-                  {t.name} <span className="text-orange-500">*</span>
-                </label>
-                <input
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-gray-900 outline-none focus:border-orange-400 transition-colors font-medium"
-                  placeholder={t.namePlaceholder}
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-
-              {/* Phone */}
-              <div>
-                <label className="block text-sm font-black text-gray-700 mb-1.5">{t.phone}</label>
-                <input
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-gray-900 outline-none focus:border-orange-400 transition-colors font-medium"
-                  placeholder={t.phonePlaceholder}
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                />
-              </div>
-
-              {/* Note */}
+              {/* Note for kitchen */}
               <div>
                 <label className="block text-sm font-black text-gray-700 mb-1.5">{t.note}</label>
                 <textarea
                   className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-gray-900 outline-none focus:border-orange-400 transition-colors resize-none font-medium"
                   placeholder={t.notePlaceholder}
-                  rows={2}
+                  rows={3}
                   value={form.note}
                   onChange={(e) => setForm({ ...form, note: e.target.value })}
                 />
@@ -512,8 +471,14 @@ function CartSheet({ onClose, restaurant, tableNumber, t }: CartSheetProps) {
                     </button>
                   ))}
                 </div>
+                {/* Card coming soon banner */}
                 {form.payment === 'card' && (
-                  <p className="text-xs text-gray-400 mt-2 text-center font-medium">{t.cardHint}</p>
+                  <div className="mt-3 flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+                    <span className="text-amber-500 text-lg flex-shrink-0">⏳</span>
+                    <p className="text-sm text-amber-700 font-medium leading-snug">
+                      {t.cardComingSoon}
+                    </p>
+                  </div>
                 )}
               </div>
 
@@ -552,8 +517,8 @@ function CartSheet({ onClose, restaurant, tableNumber, t }: CartSheetProps) {
               </button>
               <button
                 onClick={handlePlace}
-                disabled={placing}
-                className="flex-[2] bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-2xl disabled:opacity-50 transition-all active:scale-[0.98]"
+                disabled={placing || form.payment === 'card'}
+                className="flex-[2] bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-2xl disabled:opacity-40 transition-all active:scale-[0.98]"
               >
                 {placing ? t.placingOrder : t.placeOrder}
               </button>
@@ -763,29 +728,28 @@ export default function OrderPage() {
             <span className="text-base font-black">{tableNumber}</span>
           </div>
         )}
+        {/* Language switcher — in hero so it doesn't crowd the category bar */}
+        <div className="mt-4">
+          <LangPill lang={lang} onChange={switchLang} />
+        </div>
       </div>
 
       {/* ── Sticky category bar + lang switcher ── */}
       <div className="sticky top-0 z-10 bg-white border-b border-gray-100 shadow-sm">
-        <div className="flex items-center gap-2 px-4 py-2.5">
-          {/* Scrollable category pills */}
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide flex-1 min-w-0">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => scrollToCategory(cat)}
-                className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-black transition-all ${
-                  activeCategory === cat
-                    ? 'bg-orange-500 text-white shadow-sm'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-          {/* Language pill — fixed on right, never scrolls */}
-          <LangPill lang={lang} onChange={switchLang} />
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 py-2.5">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => scrollToCategory(cat)}
+              className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-black transition-all ${
+                activeCategory === cat
+                  ? 'bg-orange-500 text-white shadow-sm'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
         </div>
       </div>
 
