@@ -411,9 +411,11 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   const [logoLoading, setLogoLoading] = useState(!cached && !!restaurantId);
 
   useEffect(() => {
-    // Fade in after the first paint so any layout-settling is invisible
-    const raf = requestAnimationFrame(() => setVisible(true));
-    return () => cancelAnimationFrame(raf);
+    // 80 ms gives iOS PWA enough time to fully resolve safe-area insets and
+    // flex centering before we reveal the content. requestAnimationFrame fires
+    // too early (before layout is settled) on iOS WebKit.
+    const timer = setTimeout(() => setVisible(true), 80);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {

@@ -35,16 +35,26 @@ export default function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <ConnectionBanner />
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/order" element={<OrderPage />} />
-            <Route path="/order/success" element={<OrderSuccessPage />} />
-            <Route path="/kitchen" element={<KitchenPage />} />
-            <Route path="/admin/*" element={<AdminPage />} />
-            <Route path="/" element={<Navigate to="/admin" replace />} />
-            <Route path="*" element={<Navigate to="/admin" replace />} />
-          </Routes>
-        </Suspense>
+        <Routes>
+          <Route path="/order" element={
+            <Suspense fallback={<RouteFallback />}><OrderPage /></Suspense>
+          } />
+          <Route path="/order/success" element={
+            <Suspense fallback={<RouteFallback />}><OrderSuccessPage /></Suspense>
+          } />
+          {/* Kitchen gets a plain white fallback — no orange spinner — so the
+              PWA opens to a clean blank screen that fades into the PIN page */}
+          <Route path="/kitchen" element={
+            <Suspense fallback={<div className="min-h-screen bg-gray-50" />}>
+              <KitchenPage />
+            </Suspense>
+          } />
+          <Route path="/admin/*" element={
+            <Suspense fallback={<RouteFallback />}><AdminPage /></Suspense>
+          } />
+          <Route path="/" element={<Navigate to="/admin" replace />} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
+        </Routes>
       </BrowserRouter>
     </ErrorBoundary>
   );
