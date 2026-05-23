@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 const MASTER_PIN = '0000';
 const MUTE_KEY = 'kitchen.muted';
 const LANG_KEY = 'kitchen.lang';
+const PINNED_KEY = 'kitchen.pinned';
 
 // ─── Translations ─────────────────────────────────────────────────────────────
 
@@ -44,6 +45,9 @@ const T = {
     muteAlerts: 'Utišaj opozorila',
     unmuteAlerts: 'Vklopi opozorila',
     cancelOrder: 'Prekliči naročilo',
+    pinToTop: 'Pripni na vrh',
+    unpin: 'Odpni',
+    pinned: 'PRIORITETA',
     permissionError: 'Napaka dostopa. Dodajte ?r=id_restavracije v URL.',
     statusDone: 'končano',
     statusCancelled: 'preklicano',
@@ -80,6 +84,9 @@ const T = {
     muteAlerts: 'Mute alerts',
     unmuteAlerts: 'Unmute alerts',
     cancelOrder: 'Cancel order',
+    pinToTop: 'Pin to top',
+    unpin: 'Unpin',
+    pinned: 'PRIORITY',
     permissionError: 'Permission error. Add ?r=restaurant_id to the URL.',
     statusDone: 'done',
     statusCancelled: 'cancelled',
@@ -193,10 +200,12 @@ function ElapsedTimer({ ts, t }: { ts: number; t: typeof T['en'] }) {
 interface OrderCardProps {
   order: Order;
   onStatusChange: (id: string, status: OrderStatus) => void;
+  onTogglePin: (id: string) => void;
+  isPinned: boolean;
   t: typeof T['en'];
 }
 
-function OrderCard({ order, onStatusChange, t }: OrderCardProps) {
+function OrderCard({ order, onStatusChange, onTogglePin, isPinned, t }: OrderCardProps) {
   let items: { name: string; quantity: number; modifiers?: string }[] = [];
   try { items = JSON.parse(order.items); } catch { /* fallback */ }
 
@@ -235,12 +244,16 @@ function OrderCard({ order, onStatusChange, t }: OrderCardProps) {
         const dx = e.changedTouches[0].clientX - touchStartX.current;
         if (dx > 70 && action) onStatusChange(order.id, action.next);
       }}
-      className={`rounded-2xl border-2 mb-3 overflow-hidden ${cardStyle[order.status] ?? 'border-gray-200 bg-white'} shadow-sm`}
+      className={`rounded-2xl border-2 mb-3 overflow-hidden ${
+        isPinned ? 'border-purple-400 bg-white shadow-purple-100' : cardStyle[order.status] ?? 'border-gray-200 bg-white'
+      } shadow-sm`}
     >
-      {/* Animated accent strip — only on new orders */}
-      {isNew && <div className="h-0.5 w-full bg-orange-400 animate-pulse" />}
+      {/* Pinned priority strip */}
+      {isPinned && <div className="h-0.5 w-full bg-purple-500" />}
+      {/* New order pulse strip (only when not pinned, to avoid double strip) */}
+      {isNew && !isPinned && <div className="h-0.5 w-full bg-orange-400 animate-pulse" />}
 
-      {/* ── Top row: order# + elapsed · payment ── */}
+      {/* ── Top row: order# + elapsed · pin · payment ── */}
       <div className="px-4 pt-3 pb-2.5 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-black text-gray-400 tabular-nums">
@@ -248,12 +261,33 @@ function OrderCard({ order, onStatusChange, t }: OrderCardProps) {
           </span>
           <span className="text-gray-200 text-xs">·</span>
           <ElapsedTimer ts={order.timestamp} t={t} />
+          {isPinned && (
+            <span className="text-[9px] font-black tracking-widest text-purple-500 uppercase bg-purple-50 px-1.5 py-0.5 rounded-md">
+              {t.pinned}
+            </span>
+          )}
         </div>
-        <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wide ${
-          order.paymentType === 'cash' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
-        }`}>
-          {order.paymentType === 'cash' ? t.cash : t.card}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {/* Pin button — only on active orders */}
+          {(order.status === 'new' || order.status === 'preparing' || order.status === 'ready') && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onTogglePin(order.id); }}
+              title={isPinned ? t.unpin : t.pinToTop}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all ${
+                isPinned
+                  ? 'bg-purple-100 text-purple-500'
+                  : 'text-gray-300 hover:text-purple-400 hover:bg-purple-50'
+              }`}
+            >
+              📌
+            </button>
+          )}
+          <span className={`text-[11px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wide ${
+            order.paymentType === 'cash' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+          }`}>
+            {order.paymentType === 'cash' ? t.cash : t.card}
+          </span>
+        </div>
       </div>
 
       {/* ── Table number — centered hero ── */}
@@ -456,7 +490,29 @@ export default function KitchenPage() {
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [muted, setMutedState] = useState(() => isMuted());
   const [lang, setLangState] = useState<Lang>(getLang);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY) ?? '[]')); }
+    catch { return new Set(); }
+  });
   const prevNewCount = useRef(0);
+
+  function togglePin(id: string) {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      localStorage.setItem(PINNED_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  // Sort helper: pinned orders float to top, preserving timestamp order within groups
+  function withPins(arr: Order[]) {
+    return [...arr].sort((a, b) => {
+      const pa = pinnedIds.has(a.id) ? 0 : 1;
+      const pb = pinnedIds.has(b.id) ? 0 : 1;
+      return pa - pb;
+    });
+  }
 
   const t = T[lang];
 
@@ -559,9 +615,9 @@ export default function KitchenPage() {
     );
   }
 
-  const newOrders = orders.filter((o) => o.status === 'new');
-  const preparingOrders = orders.filter((o) => o.status === 'preparing');
-  const readyOrders = orders.filter((o) => o.status === 'ready');
+  const newOrders = withPins(orders.filter((o) => o.status === 'new'));
+  const preparingOrders = withPins(orders.filter((o) => o.status === 'preparing'));
+  const readyOrders = withPins(orders.filter((o) => o.status === 'ready'));
 
   return (
     <div
@@ -690,7 +746,7 @@ export default function KitchenPage() {
                     </div>
                     <AnimatePresence>
                       {newOrders.map((o) => (
-                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} t={t} />
+                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} onTogglePin={togglePin} isPinned={pinnedIds.has(o.id)} t={t} />
                       ))}
                     </AnimatePresence>
                   </div>
@@ -705,7 +761,7 @@ export default function KitchenPage() {
                     </div>
                     <AnimatePresence>
                       {preparingOrders.map((o) => (
-                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} t={t} />
+                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} onTogglePin={togglePin} isPinned={pinnedIds.has(o.id)} t={t} />
                       ))}
                     </AnimatePresence>
                   </div>
@@ -720,7 +776,7 @@ export default function KitchenPage() {
                     </div>
                     <AnimatePresence>
                       {readyOrders.map((o) => (
-                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} t={t} />
+                        <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} onTogglePin={togglePin} isPinned={pinnedIds.has(o.id)} t={t} />
                       ))}
                     </AnimatePresence>
                   </div>
