@@ -11,6 +11,17 @@ const MUTE_KEY = 'kitchen.muted';
 const LANG_KEY = 'kitchen.lang';
 const PINNED_KEY = 'kitchen.pinned';
 
+// ─── Restaurant cache (instant logo/name on re-open) ─────────────────────────
+function getCachedRestaurant(id: string) {
+  try {
+    const raw = localStorage.getItem(`kitchen.restaurant.${id}`);
+    return raw ? (JSON.parse(raw) as { name: string; logo: string }) : null;
+  } catch { return null; }
+}
+function setCachedRestaurant(id: string, data: { name: string; logo: string }) {
+  try { localStorage.setItem(`kitchen.restaurant.${id}`, JSON.stringify(data)); } catch {}
+}
+
 // ─── Translations ─────────────────────────────────────────────────────────────
 
 type Lang = 'sl' | 'en';
@@ -390,17 +401,23 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
-  const [logo, setLogo] = useState<string | null>(null);
-  const [logoLoading, setLogoLoading] = useState(!!restaurantId);
-  const [restaurantName, setRestaurantName] = useState<string | null>(null);
+
+  // Initialise instantly from localStorage cache so logo/name show with zero delay
+  const cached = restaurantId ? getCachedRestaurant(restaurantId) : null;
+  const [logo, setLogo] = useState<string | null>(cached?.logo ?? null);
+  const [restaurantName, setRestaurantName] = useState<string | null>(cached?.name ?? null);
+  // Only show skeleton if nothing is cached yet (true first-ever load)
+  const [logoLoading, setLogoLoading] = useState(!cached && !!restaurantId);
 
   useEffect(() => {
     if (!restaurantId) return;
+    // Fetch fresh data in background — updates cache silently if anything changed
     get(refs.restaurant(restaurantId)).then((snap) => {
       if (snap.exists()) {
         const r = snap.val() as Restaurant;
         if (r.logo) setLogo(r.logo);
         if (r.name) setRestaurantName(r.name);
+        if (r.logo && r.name) setCachedRestaurant(restaurantId, { name: r.name, logo: r.logo });
       }
       setLogoLoading(false);
     }).catch(() => { setLogoLoading(false); });
