@@ -65,7 +65,7 @@ function playAlarm() {
 function startAlarmLoop() {
   if (alarmLoopTimer) return;
   playAlarm();
-  alarmLoopTimer = setInterval(playAlarm, 4000);
+  alarmLoopTimer = setInterval(playAlarm, 6000);
 }
 function stopAlarmLoop() {
   if (alarmLoopTimer) { clearInterval(alarmLoopTimer); alarmLoopTimer = null; }
@@ -107,85 +107,98 @@ function OrderCard({ order, onStatusChange }: OrderCardProps) {
   try { items = JSON.parse(order.items); } catch { /* fallback */ }
 
   const nextStatus: Record<string, { label: string; next: OrderStatus }> = {
-    new: { label: 'Start preparing', next: 'preparing' },
-    preparing: { label: 'Mark ready', next: 'ready' },
-    ready: { label: 'Served ✓', next: 'done' },
+    new: { label: '▶ Start Preparing', next: 'preparing' },
+    preparing: { label: '✓ Mark Ready', next: 'ready' },
+    ready: { label: '🍽 Served', next: 'done' },
   };
 
   const action = nextStatus[order.status];
 
-  const bgColor = {
-    new: 'border-l-orange-500 bg-white',
-    preparing: 'border-l-blue-500 bg-blue-50',
-    ready: 'border-l-green-500 bg-green-50',
-    done: 'bg-gray-50',
-    cancelled: 'bg-gray-50',
-  }[order.status] ?? 'bg-white';
+  const cardStyle = {
+    new: 'border-orange-400 bg-white shadow-orange-100',
+    preparing: 'border-blue-400 bg-blue-50 shadow-blue-100',
+    ready: 'border-green-400 bg-green-50 shadow-green-100',
+    done: 'border-gray-200 bg-gray-50',
+    cancelled: 'border-gray-200 bg-gray-50',
+  }[order.status] ?? 'border-gray-200 bg-white';
+
+  const actionStyle = {
+    new: 'bg-orange-500 hover:bg-orange-600 text-white',
+    preparing: 'bg-blue-500 hover:bg-blue-600 text-white',
+    ready: 'bg-green-500 hover:bg-green-600 text-white',
+  }[order.status] ?? '';
 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      className={`rounded-2xl border-l-4 shadow-sm p-4 mb-3 ${bgColor}`}
+      exit={{ opacity: 0, scale: 0.96 }}
+      className={`rounded-2xl border-2 shadow-md mb-4 overflow-hidden ${cardStyle}`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xl font-black text-gray-900">#{String(order.orderNumber).padStart(3, '0')}</span>
-          {order.tableNumber != null && (
-            <span className="bg-gray-100 text-gray-600 text-xs font-semibold px-2 py-1 rounded-lg">
-              Table {order.tableNumber}
-            </span>
-          )}
-          <span className={`text-xs font-semibold px-2 py-1 rounded-lg capitalize ${
-            order.paymentType === 'cash'
-              ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-blue-100 text-blue-700'
-          }`}>
-            {order.paymentType}
+      {/* Card Header */}
+      <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-3">
+        {/* Left: order number + table */}
+        <div className="flex items-center gap-3">
+          <span className="text-3xl font-black text-gray-900 leading-none">
+            #{String(order.orderNumber).padStart(3, '0')}
           </span>
+          {order.tableNumber != null && (
+            <div className="bg-gray-900 text-white rounded-xl px-3 py-1.5 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 leading-none mb-0.5">Table</p>
+              <p className="text-2xl font-black leading-none">{order.tableNumber}</p>
+            </div>
+          )}
         </div>
-        <ElapsedTimer ts={order.timestamp} />
+
+        {/* Right: payment + timer */}
+        <div className="flex flex-col items-end gap-1.5">
+          <span className={`text-sm font-black px-3 py-1 rounded-lg uppercase tracking-wide ${
+            order.paymentType === 'cash'
+              ? 'bg-amber-400 text-amber-900'
+              : 'bg-blue-500 text-white'
+          }`}>
+            {order.paymentType === 'cash' ? '💵 Cash' : '💳 Card'}
+          </span>
+          <ElapsedTimer ts={order.timestamp} />
+        </div>
       </div>
 
-      <p className="text-sm text-gray-500 mb-2">{order.customerName}</p>
+      {/* Divider */}
+      <div className="mx-4 border-t border-gray-100" />
 
-      <div className="space-y-1 mb-3">
+      {/* Items */}
+      <div className="px-4 py-3 space-y-2">
         {items.length > 0 ? items.map((item, i) => (
-          <div key={i} className="flex items-start gap-2">
-            <span className="font-bold text-gray-800 text-sm w-6 flex-shrink-0">{item.quantity}×</span>
+          <div key={i} className="flex items-start gap-3">
+            <span className="bg-gray-900 text-white text-sm font-black w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0">
+              {item.quantity}
+            </span>
             <div>
-              <span className="text-gray-800 text-sm">{item.name}</span>
-              {item.modifiers && (
-                <p className="text-xs text-gray-400">{item.modifiers}</p>
-              )}
+              <p className="text-gray-900 font-semibold text-base leading-tight">{item.name}</p>
+              {item.modifiers && <p className="text-xs text-gray-400 mt-0.5">{item.modifiers}</p>}
             </div>
           </div>
         )) : (
-          <p className="text-sm text-gray-600">{order.itemsReadable}</p>
+          <p className="text-gray-700 text-base">{order.itemsReadable}</p>
         )}
       </div>
 
+      {/* Note */}
       {order.note && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 mb-3">
-          <p className="text-xs font-semibold text-yellow-700 mb-0.5">Note</p>
-          <p className="text-sm text-yellow-800">{order.note}</p>
+        <div className="mx-4 mb-3 bg-yellow-50 border border-yellow-300 rounded-xl px-3 py-2">
+          <p className="text-xs font-bold text-yellow-700 uppercase tracking-wide mb-0.5">⚠ Note</p>
+          <p className="text-sm text-yellow-900 font-medium">{order.note}</p>
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <span className="font-bold text-gray-900">€{order.totalPrice.toFixed(2)}</span>
+      {/* Footer */}
+      <div className="px-4 pb-4 flex items-center justify-between gap-3">
+        <span className="text-xl font-black text-gray-900">€{order.totalPrice.toFixed(2)}</span>
         {action && (
           <button
             onClick={() => onStatusChange(order.id, action.next)}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-              order.status === 'new'
-                ? 'bg-orange-500 text-white'
-                : order.status === 'preparing'
-                ? 'bg-blue-500 text-white'
-                : 'bg-green-500 text-white'
-            }`}
+            className={`flex-1 py-3.5 rounded-xl text-base font-black tracking-wide transition-all active:scale-[0.98] shadow-sm ${actionStyle}`}
           >
             {action.label}
           </button>
@@ -298,6 +311,27 @@ export default function KitchenPage() {
     setAudioUnlocked(true);
   }
 
+  // ── Screen Wake Lock — keeps display on while kitchen is open ───────────────
+  useEffect(() => {
+    if (!auth) return;
+    let sentinel: WakeLockSentinel | null = null;
+    async function acquire() {
+      try {
+        if ('wakeLock' in navigator) {
+          sentinel = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch { /* device may not support it */ }
+    }
+    acquire();
+    // iOS releases the lock when the app is backgrounded — re-acquire on return
+    function onVisible() { if (document.visibilityState === 'visible') acquire(); }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      sentinel?.release().catch(() => {});
+    };
+  }, [auth]);
+
   // Tab-title cue for kitchen staff who keep the page in a background tab:
   // prefix the active-order count so the tab acts like a Gmail-style badge.
   const activeCount = orders.length;
@@ -354,20 +388,23 @@ export default function KitchenPage() {
       )}
 
       {/* Header */}
-      <div className="bg-gray-900 text-white px-4 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="font-bold text-lg">{auth.name}</h1>
-          <p className="text-gray-400 text-xs">Kitchen view</p>
-        </div>
+      <div className="bg-gray-900 text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-orange-500 rounded-xl flex items-center justify-center text-lg">🍳</div>
+          <div>
+            <h1 className="font-black text-base leading-tight">{auth.name}</h1>
+            <p className="text-gray-400 text-xs">Kitchen Display</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
           {orders.length > 0 && (
-            <div className="bg-orange-500 text-white text-sm font-bold px-3 py-1 rounded-full">
+            <div className="bg-orange-500 text-white text-sm font-black px-3 py-1.5 rounded-xl">
               {orders.length} active
             </div>
           )}
           <button
-            onClick={() => setAuth(null)}
-            className="text-gray-400 text-xs px-3 py-2 rounded-lg hover:bg-gray-800"
+            onClick={() => { stopAlarmLoop(); setAuth(null); }}
+            className="text-gray-400 text-xs px-3 py-2 rounded-lg hover:bg-gray-800 border border-gray-700"
           >
             Lock
           </button>
@@ -375,16 +412,18 @@ export default function KitchenPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 bg-white">
+      <div className="flex bg-gray-800">
         {(['active', 'history'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-3 text-sm font-semibold capitalize transition-colors ${
-              tab === t ? 'text-orange-500 border-b-2 border-orange-500' : 'text-gray-500'
+            className={`flex-1 py-3 text-sm font-bold transition-colors ${
+              tab === t
+                ? 'text-orange-400 border-b-2 border-orange-400 bg-gray-900'
+                : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            {t === 'active' ? `Active (${orders.length})` : 'History'}
+            {t === 'active' ? `🔥 Active (${orders.length})` : '📋 History'}
           </button>
         ))}
       </div>
@@ -393,15 +432,19 @@ export default function KitchenPage() {
         {tab === 'active' ? (
           <>
             {orders.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">
-                <p className="text-4xl mb-3">🍽</p>
-                <p>No active orders</p>
+              <div className="text-center py-20 text-gray-400">
+                <p className="text-5xl mb-4">🍽</p>
+                <p className="text-lg font-semibold">All clear — no active orders</p>
+                <p className="text-sm mt-1 text-gray-500">New orders will appear here automatically</p>
               </div>
             ) : (
               <>
                 {newOrders.length > 0 && (
-                  <div className="mb-2">
-                    <p className="text-xs font-bold text-orange-500 uppercase tracking-wide mb-2">New ({newOrders.length})</p>
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse" />
+                      <p className="text-sm font-black text-orange-500 uppercase tracking-widest">New Orders ({newOrders.length})</p>
+                    </div>
                     <AnimatePresence>
                       {newOrders.map((o) => (
                         <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} />
@@ -410,8 +453,11 @@ export default function KitchenPage() {
                   </div>
                 )}
                 {preparingOrders.length > 0 && (
-                  <div className="mb-2">
-                    <p className="text-xs font-bold text-blue-500 uppercase tracking-wide mb-2">Preparing ({preparingOrders.length})</p>
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                      <p className="text-sm font-black text-blue-500 uppercase tracking-widest">Preparing ({preparingOrders.length})</p>
+                    </div>
                     <AnimatePresence>
                       {preparingOrders.map((o) => (
                         <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} />
@@ -420,8 +466,11 @@ export default function KitchenPage() {
                   </div>
                 )}
                 {readyOrders.length > 0 && (
-                  <div className="mb-2">
-                    <p className="text-xs font-bold text-green-500 uppercase tracking-wide mb-2">Ready ({readyOrders.length})</p>
+                  <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                      <p className="text-sm font-black text-green-500 uppercase tracking-widest">Ready to Serve ({readyOrders.length})</p>
+                    </div>
                     <AnimatePresence>
                       {readyOrders.map((o) => (
                         <OrderCard key={o.id} order={o} onStatusChange={updateOrderStatus} />
@@ -436,21 +485,26 @@ export default function KitchenPage() {
           <>
             {history.length === 0 ? (
               <div className="text-center py-16 text-gray-400">
-                <p>No order history</p>
+                <p className="text-4xl mb-3">📋</p>
+                <p>No order history yet</p>
               </div>
             ) : (
-              <div>
+              <div className="space-y-3">
                 {history.map((o) => (
-                  <div key={o.id} className="bg-white rounded-2xl p-4 mb-3 opacity-70">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-gray-700">#{String(o.orderNumber).padStart(3, '0')}</span>
-                      <span className={`text-xs px-2 py-1 rounded-lg font-semibold ${
-                        o.status === 'done' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-500'
+                  <div key={o.id} className="bg-white rounded-2xl p-4 border border-gray-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-black text-gray-800">#{String(o.orderNumber).padStart(3, '0')}</span>
+                        {o.tableNumber != null && (
+                          <span className="bg-gray-100 text-gray-700 text-xs font-bold px-2 py-1 rounded-lg">Table {o.tableNumber}</span>
+                        )}
+                      </div>
+                      <span className={`text-xs px-2.5 py-1 rounded-lg font-bold uppercase ${
+                        o.status === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
                       }`}>{o.status}</span>
                     </div>
-                    {o.tableNumber != null && <p className="text-xs text-gray-400">Table {o.tableNumber}</p>}
-                    <p className="text-sm text-gray-600 mt-1">{o.itemsReadable}</p>
-                    <p className="text-sm font-semibold text-gray-800 mt-1">€{o.totalPrice.toFixed(2)}</p>
+                    <p className="text-sm text-gray-600">{o.itemsReadable}</p>
+                    <p className="text-base font-black text-gray-900 mt-1">€{o.totalPrice.toFixed(2)}</p>
                   </div>
                 ))}
               </div>
