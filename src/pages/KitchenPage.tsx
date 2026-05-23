@@ -122,11 +122,12 @@ function OrderCard({ order, onStatusChange }: OrderCardProps) {
     cancelled: 'border-gray-200 bg-gray-50',
   }[order.status] ?? 'border-gray-200 bg-white';
 
-  const actionStyle = {
+  const actionStyle: Record<string, string> = {
     new: 'bg-orange-500 hover:bg-orange-600 text-white',
     preparing: 'bg-blue-500 hover:bg-blue-600 text-white',
     ready: 'bg-green-500 hover:bg-green-600 text-white',
-  }[order.status] ?? '';
+  };
+  const btnStyle = actionStyle[order.status] ?? '';
 
   return (
     <motion.div
@@ -198,7 +199,7 @@ function OrderCard({ order, onStatusChange }: OrderCardProps) {
         {action && (
           <button
             onClick={() => onStatusChange(order.id, action.next)}
-            className={`flex-1 py-3.5 rounded-xl text-base font-black tracking-wide transition-all active:scale-[0.98] shadow-sm ${actionStyle}`}
+            className={`flex-1 py-3.5 rounded-xl text-base font-black tracking-wide transition-all active:scale-[0.98] shadow-sm ${btnStyle}`}
           >
             {action.label}
           </button>
