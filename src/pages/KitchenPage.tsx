@@ -191,7 +191,6 @@ function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
   const [checking, setChecking] = useState(false);
 
   async function check() {
-    primeAlarm(); // unlock audio on iOS during this user gesture
     if (pin === MASTER_PIN) {
       onSuccess(null, 'All restaurants');
       return;
@@ -250,6 +249,7 @@ function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
         />
         {error && <p className="text-red-400 text-sm text-center mb-3">{error}</p>}
         <button
+          onPointerDown={primeAlarm}
           onClick={check}
           disabled={!pin || checking}
           className="w-full bg-orange-500 text-white font-semibold py-4 rounded-2xl disabled:opacity-40"
