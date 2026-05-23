@@ -389,15 +389,14 @@ export default function KitchenPage() {
       )}
 
       {/* Header */}
-      <div className="bg-gray-900 text-white px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-orange-500 rounded-xl flex items-center justify-center text-lg">🍳</div>
-          <div>
-            <h1 className="font-black text-base leading-tight">{auth.name}</h1>
-            <p className="text-gray-400 text-xs">Kitchen Display</p>
-          </div>
+      <div className="bg-gray-900 text-white px-4 py-4 relative flex items-center justify-center">
+        {/* Center: restaurant name */}
+        <div className="text-center">
+          <h1 className="font-black text-2xl leading-tight tracking-tight">{auth.name}</h1>
+          <p className="text-orange-400 text-xs font-semibold uppercase tracking-widest mt-0.5">Kitchen Display</p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Right: active badge + lock */}
+        <div className="absolute right-4 flex items-center gap-2">
           {orders.length > 0 && (
             <div className="bg-orange-500 text-white text-sm font-black px-3 py-1.5 rounded-xl">
               {orders.length} active
