@@ -37,6 +37,10 @@ const T = {
     preparing: 'V pripravi',
     readyToServe: 'Pripravljeno za serviranje',
     noHistory: 'Ni zgodovine naročil',
+    shiftSummary: 'Pregled izmene — danes',
+    summaryCompleted: 'Dokončano',
+    summaryRevenue: 'Prihodek',
+    summaryCancelled: 'Preklicano',
     table: 'Miza',
     cash: '💵 Gotovina',
     card: '💳 Kartica',
@@ -76,6 +80,10 @@ const T = {
     preparing: 'Preparing',
     readyToServe: 'Ready to Serve',
     noHistory: 'No order history yet',
+    shiftSummary: 'Shift Summary — Today',
+    summaryCompleted: 'Completed',
+    summaryRevenue: 'Revenue',
+    summaryCancelled: 'Cancelled',
     table: 'Table',
     cash: '💵 Cash',
     card: '💳 Card',
@@ -385,6 +393,63 @@ function OrderCard({ order, onStatusChange, onTogglePin, isPinned, t }: OrderCar
         </div>
       </div>
     </motion.div>
+  );
+}
+
+// ─── Shift Summary Bar ───────────────────────────────────────────────────────
+
+function ShiftSummaryBar({ history, t }: { history: Order[]; t: typeof T['en'] }) {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayTs = todayStart.getTime();
+
+  const todayOrders = history.filter((o) => o.timestamp >= todayTs);
+  const completed = todayOrders.filter((o) => o.status === 'done');
+  const cancelled = todayOrders.filter((o) => o.status === 'cancelled');
+  const revenue = completed.reduce((sum, o) => sum + (o.totalPrice ?? 0), 0);
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-4">
+      {/* Header strip */}
+      <div className="bg-gray-50 border-b border-gray-100 px-4 py-2 flex items-center gap-2">
+        <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+        <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+          {t.shiftSummary}
+        </p>
+      </div>
+      {/* Stats row */}
+      <div className="grid grid-cols-3 divide-x divide-gray-100">
+        {/* Completed */}
+        <div className="flex flex-col items-center justify-center py-4 px-2">
+          <p className="text-3xl font-black text-gray-900 tabular-nums leading-none">
+            {completed.length}
+          </p>
+          <p className="text-[10px] font-black uppercase tracking-wide text-gray-400 mt-1.5">
+            {t.summaryCompleted}
+          </p>
+        </div>
+        {/* Revenue */}
+        <div className="flex flex-col items-center justify-center py-4 px-2">
+          <p className="text-3xl font-black text-green-600 tabular-nums leading-none">
+            €{revenue.toFixed(2)}
+          </p>
+          <p className="text-[10px] font-black uppercase tracking-wide text-gray-400 mt-1.5">
+            {t.summaryRevenue}
+          </p>
+        </div>
+        {/* Cancelled */}
+        <div className="flex flex-col items-center justify-center py-4 px-2">
+          <p className={`text-3xl font-black tabular-nums leading-none ${
+            cancelled.length > 0 ? 'text-red-500' : 'text-gray-300'
+          }`}>
+            {cancelled.length}
+          </p>
+          <p className="text-[10px] font-black uppercase tracking-wide text-gray-400 mt-1.5">
+            {t.summaryCancelled}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -823,7 +888,11 @@ export default function KitchenPage() {
               </>
             )
           ) : (
-            history.length === 0 ? (
+            <>
+              {/* Daily summary — always visible in history tab */}
+              <ShiftSummaryBar history={history} t={t} />
+
+              {history.length === 0 ? (
               <div className="text-center py-16 text-gray-400">
                 <p className="text-4xl mb-3">📋</p>
                 <p className="font-semibold">{t.noHistory}</p>
@@ -856,6 +925,8 @@ export default function KitchenPage() {
                 ))}
               </div>
             )
+            }
+            </>
           )}
         </div>
       </div>
