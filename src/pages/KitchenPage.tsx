@@ -9,14 +9,14 @@ import { useSearchParams } from 'react-router-dom';
 const MASTER_PIN = '0000';
 
 // ─── Audio alert (iOS-safe) ───────────────────────────────────────────────────
-// WAV is generated and the Audio element is created at module load time so
-// that when primeAlarm() is called inside the PIN-entry tap handler, play()
-// fires immediately — iOS Safari requires the call to be synchronous and
-// near-instant relative to the user gesture.
+// Professional double-chime using sine waves with exponential decay.
+// Built eagerly at module load so play() fires instantly on first gesture.
+// Loops every 4 s while there are unaccepted new orders.
 
 function buildAlarmAudio(): HTMLAudioElement {
-  const sampleRate = 22050;
-  const duration = 1.5;
+  const sampleRate = 44100;
+  // Two chime hits: 880 Hz (A5) at t=0, 1047 Hz (C6) at t=0.35s
+  const duration = 1.4;
   const numSamples = Math.floor(sampleRate * duration);
   const buf = new ArrayBuffer(44 + numSamples * 2);
   const v = new DataView(buf);
@@ -27,14 +27,22 @@ function buildAlarmAudio(): HTMLAudioElement {
   v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
   v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   w(36, 'data'); v.setUint32(40, numSamples * 2, true);
-  const pulse = Math.floor(sampleRate * 0.4);
-  const gap = Math.floor(sampleRate * 0.1);
+
+  const chime = (t: number, freq: number, startT: number) => {
+    const dt = t - startT;
+    if (dt < 0) return 0;
+    // Sine wave with fast attack and smooth exponential decay
+    const attack = Math.min(dt / 0.005, 1);
+    const decay = Math.exp(-dt * 6);
+    return attack * decay * Math.sin(2 * Math.PI * freq * dt)
+         + attack * decay * 0.3 * Math.sin(2 * Math.PI * freq * 2 * dt)   // 1st harmonic
+         + attack * decay * 0.1 * Math.sin(2 * Math.PI * freq * 3 * dt);  // 2nd harmonic
+  };
+
   for (let i = 0; i < numSamples; i++) {
-    const pos = i % (pulse + gap);
-    const sample = pos < pulse
-      ? Math.sign(Math.sin(2 * Math.PI * (pos < pulse / 2 ? 1200 : 900) * i / sampleRate)) * 28000
-      : 0;
-    v.setInt16(44 + i * 2, sample, true);
+    const t = i / sampleRate;
+    const sample = (chime(t, 880, 0) + chime(t, 1047, 0.38)) * 26000;
+    v.setInt16(44 + i * 2, Math.max(-32767, Math.min(32767, sample)), true);
   }
   const bytes = new Uint8Array(buf);
   let bin = '';
@@ -44,16 +52,25 @@ function buildAlarmAudio(): HTMLAudioElement {
   return audio;
 }
 
-// Created eagerly at module load so it's ready before any user interaction.
 const alarmAudio = buildAlarmAudio();
+let alarmLoopTimer: ReturnType<typeof setInterval> | null = null;
 
 function primeAlarm() {
-  // Called synchronously inside PIN-entry tap — unlocks audio on iOS Safari.
   alarmAudio.play().then(() => { alarmAudio.pause(); alarmAudio.currentTime = 0; }).catch(() => {});
 }
 function playAlarm() {
   alarmAudio.currentTime = 0;
   alarmAudio.play().catch(() => {});
+}
+function startAlarmLoop() {
+  if (alarmLoopTimer) return;
+  playAlarm();
+  alarmLoopTimer = setInterval(playAlarm, 4000);
+}
+function stopAlarmLoop() {
+  if (alarmLoopTimer) { clearInterval(alarmLoopTimer); alarmLoopTimer = null; }
+  alarmAudio.pause();
+  alarmAudio.currentTime = 0;
 }
 
 function elapsed(ts: number) {
@@ -183,9 +200,10 @@ function OrderCard({ order, onStatusChange }: OrderCardProps) {
 interface PinEntryProps {
   restaurantId: string | null;
   onSuccess: (restaurantId: string | null, restaurantName: string) => void;
+  onAudioUnlock: () => void;
 }
 
-function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
+function PinEntry({ restaurantId, onSuccess, onAudioUnlock }: PinEntryProps) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -249,7 +267,7 @@ function PinEntry({ restaurantId, onSuccess }: PinEntryProps) {
         />
         {error && <p className="text-red-400 text-sm text-center mb-3">{error}</p>}
         <button
-          onPointerDown={primeAlarm}
+          onPointerDown={() => { primeAlarm(); onAudioUnlock(); }}
           onClick={check}
           disabled={!pin || checking}
           className="w-full bg-orange-500 text-white font-semibold py-4 rounded-2xl disabled:opacity-40"
@@ -304,8 +322,10 @@ export default function KitchenPage() {
       done.sort((a, b) => b.timestamp - a.timestamp);
 
       const newCount = active.filter((o) => o.status === 'new').length;
-      if (newCount > prevNewCount.current) {
-        playAlarm();
+      if (newCount > 0) {
+        startAlarmLoop();
+      } else {
+        stopAlarmLoop();
       }
       prevNewCount.current = newCount;
 
@@ -316,7 +336,7 @@ export default function KitchenPage() {
   }, [auth]);
 
   if (!auth) {
-    return <PinEntry restaurantId={restaurantId} onSuccess={(id, name) => setAuth({ restaurantId: id, name })} />;
+    return <PinEntry restaurantId={restaurantId} onSuccess={(id, name) => setAuth({ restaurantId: id, name })} onAudioUnlock={() => setAudioUnlocked(true)} />;
   }
 
   const newOrders = orders.filter((o) => o.status === 'new');
