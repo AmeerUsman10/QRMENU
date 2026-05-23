@@ -9,56 +9,51 @@ import { useSearchParams } from 'react-router-dom';
 const MASTER_PIN = '0000';
 
 // ─── Audio alert (iOS-safe) ───────────────────────────────────────────────────
-// Generates a WAV data URL at runtime — no asset file needed.
-// The audio element is unlocked during PIN entry (user gesture) so iOS Safari
-// allows programmatic play() calls after that.
+// WAV is generated and the Audio element is created at module load time so
+// that when primeAlarm() is called inside the PIN-entry tap handler, play()
+// fires immediately — iOS Safari requires the call to be synchronous and
+// near-instant relative to the user gesture.
 
-function generateAlarmDataUrl(): string {
+function buildAlarmAudio(): HTMLAudioElement {
   const sampleRate = 22050;
   const duration = 1.5;
   const numSamples = Math.floor(sampleRate * duration);
-  const buffer = new ArrayBuffer(44 + numSamples * 2);
-  const view = new DataView(buffer);
-  const write = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
-  write(0, 'RIFF'); view.setUint32(4, 36 + numSamples * 2, true);
-  write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-  write(36, 'data'); view.setUint32(40, numSamples * 2, true);
-  const pulseLen = Math.floor(sampleRate * 0.4);
-  const gapLen = Math.floor(sampleRate * 0.1);
+  const buf = new ArrayBuffer(44 + numSamples * 2);
+  const v = new DataView(buf);
+  const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + numSamples * 2, true);
+  w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, numSamples * 2, true);
+  const pulse = Math.floor(sampleRate * 0.4);
+  const gap = Math.floor(sampleRate * 0.1);
   for (let i = 0; i < numSamples; i++) {
-    const pos = i % (pulseLen + gapLen);
-    let sample = 0;
-    if (pos < pulseLen) {
-      const freq = pos < pulseLen / 2 ? 1200 : 900;
-      sample = Math.sign(Math.sin(2 * Math.PI * freq * i / sampleRate)) * 28000;
-    }
-    view.setInt16(44 + i * 2, sample, true);
+    const pos = i % (pulse + gap);
+    const sample = pos < pulse
+      ? Math.sign(Math.sin(2 * Math.PI * (pos < pulse / 2 ? 1200 : 900) * i / sampleRate)) * 28000
+      : 0;
+    v.setInt16(44 + i * 2, sample, true);
   }
-  const bytes = new Uint8Array(buffer);
+  const bytes = new Uint8Array(buf);
   let bin = '';
-  bytes.forEach((b) => { bin += String.fromCharCode(b); });
-  return 'data:audio/wav;base64,' + btoa(bin);
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const audio = new Audio('data:audio/wav;base64,' + btoa(bin));
+  audio.volume = 1.0;
+  return audio;
 }
 
-let _alarmAudio: HTMLAudioElement | null = null;
-function getAlarmAudio(): HTMLAudioElement {
-  if (!_alarmAudio) {
-    _alarmAudio = new Audio(generateAlarmDataUrl());
-    _alarmAudio.volume = 1.0;
-  }
-  return _alarmAudio;
-}
+// Created eagerly at module load so it's ready before any user interaction.
+const alarmAudio = buildAlarmAudio();
+
 function primeAlarm() {
-  const a = getAlarmAudio();
-  a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+  // Called synchronously inside PIN-entry tap — unlocks audio on iOS Safari.
+  alarmAudio.play().then(() => { alarmAudio.pause(); alarmAudio.currentTime = 0; }).catch(() => {});
 }
 function playAlarm() {
-  const a = getAlarmAudio();
-  a.currentTime = 0;
-  a.play().catch(() => {});
+  alarmAudio.currentTime = 0;
+  alarmAudio.play().catch(() => {});
 }
 
 function elapsed(ts: number) {
