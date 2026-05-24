@@ -573,6 +573,18 @@ function OrderConfirmation({ orderNumber, onDismiss, t }: {
   );
 }
 
+// ─── Restaurant cache (instant menu on reconnect) ────────────────────────────
+
+function getCachedMenu(id: string): Restaurant | null {
+  try {
+    const raw = localStorage.getItem(`menu.restaurant.${id}`);
+    return raw ? (JSON.parse(raw) as Restaurant) : null;
+  } catch { return null; }
+}
+function setCachedMenu(id: string, data: Restaurant) {
+  try { localStorage.setItem(`menu.restaurant.${id}`, JSON.stringify(data)); } catch {}
+}
+
 // ─── Main OrderPage ───────────────────────────────────────────────────────────
 
 export default function OrderPage() {
@@ -585,15 +597,17 @@ export default function OrderPage() {
 
   function switchLang(l: Lang) { saveLang(l); setLangState(l); }
 
-  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from cache so returning visitors never see the skeleton
+  const cached = restaurantId ? getCachedMenu(restaurantId) : null;
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(cached);
+  const [loading, setLoading] = useState(!cached); // skip skeleton if cache hit
   const [error, setError] = useState('');
   const [tableNumber, setTableNumber] = useState<number | null>(
     tableParam ? parseInt(tableParam, 10) : null,
   );
   const [tableInput, setTableInput] = useState('');
   const [tableConfirmed, setTableConfirmed] = useState(!!tableParam);
-  const [activeCategory, setActiveCategory] = useState('');
+  const [activeCategory, setActiveCategory] = useState(cached?.categories?.[0] ?? '');
   const [cartOpen, setCartOpen] = useState(false);
   const [modifierItem, setModifierItem] = useState<MenuItem | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<{ id: string; number: number } | null>(null);
@@ -620,6 +634,7 @@ export default function OrderPage() {
       if (!snap.exists()) { setError(t.restaurantNotFound); setLoading(false); return; }
       const data = { id: restaurantId, ...snap.val() } as Restaurant;
       setRestaurant(data);
+      setCachedMenu(restaurantId, data); // keep cache fresh for next visit
       if (data.categories?.length) setActiveCategory(data.categories[0]);
       setContext(restaurantId, tableNumber);
       setLoading(false);

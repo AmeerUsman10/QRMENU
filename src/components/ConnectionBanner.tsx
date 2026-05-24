@@ -11,8 +11,9 @@ import { db } from '../lib/firebase';
  * briefly during the initial WebSocket handshake before quickly resolving to true.
  *
  * Behaviour:
- *  - Disconnected < 3s  → banner stays hidden (covers normal refresh/PWA open)
- *  - Disconnected ≥ 3s  → banner slides in
+ *  - Disconnected < 8s  → banner stays hidden (covers iOS background/resume
+ *                          and normal Firebase WebSocket reconnection noise)
+ *  - Disconnected ≥ 8s  → banner slides in
  *  - Reconnected         → banner slides out immediately
  */
 export function ConnectionBanner() {
@@ -31,7 +32,7 @@ export function ConnectionBanner() {
       } else {
         // Lost connection — wait 3s before showing the banner so that normal
         // refresh / PWA-open handshake noise never triggers it
-        timer.current = setTimeout(() => setShowBanner(true), 3000);
+        timer.current = setTimeout(() => setShowBanner(true), 8000);
       }
     });
 
