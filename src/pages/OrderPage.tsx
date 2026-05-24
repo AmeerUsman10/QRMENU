@@ -771,12 +771,14 @@ export default function OrderPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-28">
+    <>
+    {/* ── Language switcher — outside the scrollable div so CSS transforms
+        on animated children never break its fixed positioning on iOS ── */}
+    <div className="fixed top-3 right-4 z-50">
+      <LangPill lang={lang} onChange={switchLang} />
+    </div>
 
-      {/* ── Language switcher — fixed top-right, always visible ── */}
-      <div className="fixed top-3 right-4 z-20">
-        <LangPill lang={lang} onChange={switchLang} />
-      </div>
+    <div className="min-h-screen bg-gray-50 pb-28">
 
       {/* ── Hero ── */}
       <div className="bg-white border-b border-gray-100 px-4 pt-10 pb-8 text-center shadow-sm">
@@ -1109,5 +1111,6 @@ export default function OrderPage() {
         )}
       </AnimatePresence>
     </div>
+    </>
   );
 }
