@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChefHat, Clock, BellRing, XCircle, Sparkles } from 'lucide-react';
@@ -207,6 +207,18 @@ export default function OrderSuccessPage() {
   const [existingReview, setExistingReview] = useState<{ rating: number; comment: string } | null>(null);
   // Show review card whenever order reaches 'done' status (real-time or on load)
   const [showReview, setShowReview] = useState(false);
+  const reviewRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to review card as soon as it appears
+  useEffect(() => {
+    if (!showReview) return;
+    // Wait for the motion entrance animation to begin (300 ms),
+    // then smoothly scroll the card into view
+    const t = setTimeout(() => {
+      reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [showReview]);
 
   useDocumentTitle(
     error
@@ -434,13 +446,15 @@ export default function OrderSuccessPage() {
         {/* ── Review card — animates in when order is served ── */}
         <AnimatePresence>
           {showReview && orderId && (
-            <ReviewCard
-              key="review"
-              orderId={orderId}
-              initialRating={existingReview?.rating}
-              initialComment={existingReview?.comment}
-              initialSubmitted={!!existingReview}
-            />
+            <div ref={reviewRef}>
+              <ReviewCard
+                key="review"
+                orderId={orderId}
+                initialRating={existingReview?.rating}
+                initialComment={existingReview?.comment}
+                initialSubmitted={!!existingReview}
+              />
+            </div>
           )}
         </AnimatePresence>
 
