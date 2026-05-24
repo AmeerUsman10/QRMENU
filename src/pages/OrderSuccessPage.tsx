@@ -7,32 +7,92 @@ import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { OrderSuccessSkeleton } from '../components/Skeleton';
 import type { Order, CartItem } from '../types';
 
-// ─── Review translations ──────────────────────────────────────────────────────
+// ─── Translations ─────────────────────────────────────────────────────────────
 
-const RT = {
+type Lang = 'sl' | 'en';
+
+const T = {
   sl: {
+    // Page / document
+    titleNotFound: 'Naročilo ni najdeno',
+    titleStatus: 'Status naročila',
+    // Error screen
+    errorLabel: 'Napaka',
+    noOrderFound: 'Naročilo ni najdeno.',
+    orderNotFound: 'Naročilo ne obstaja.',
+    goHome: 'Na začetno stran',
+    // Status headers
+    statusNew:        { title: 'Naročilo sprejeto',       subtitle: 'Kuhinja je prejela vaše naročilo in bo kmalu začela s pripravo.' },
+    statusPreparing:  { title: 'V pripravi',              subtitle: 'Kuhar pripravlja vašo jed iz svežih sestavin.' },
+    statusReady:      { title: 'Pripravljeno! 🔔',        subtitle: 'Vaša hrana je pripravljena in bo kmalu prinesena na mizo.' },
+    statusDone:       { title: 'Postreženo! Dober tek 🍽', subtitle: 'Upamo, da vam bo teknilo! Kadarkoli lahko naročite še več.' },
+    statusCancelled:  { title: 'Preklicano',              subtitle: 'To naročilo je bilo preklicano. Prosimo, obrnite se na osebje.' },
+    statusProcessing: { title: 'Obdelava…',               subtitle: 'Preverjam status…' },
+    // Order number block
+    yourOrderNumber: 'Vaša številka naročila',
+    table: 'Miza',
+    // Progress tracker
+    stepReceived:  'Sprejeto',
+    stepPreparing: 'Priprava',
+    stepOrderUp:   'Pripravljeno!',
+    stepServed:    'Postreženo',
+    // Order details
+    orderItems: 'Naročeni artikli',
+    totalPrice: 'Skupaj',
+    paymentLabel: 'Plačilo',
+    statusLabel: 'Status',
+    // Action
+    orderMore: 'Naroči še kaj',
+    keepOpen: 'Pustite to stran odprto za sledenje naročilu v živo!',
+    // Review
     howWasIt: 'Kako je bilo?',
     reviewSubtitle: 'Vaše mnenje nam pomaga izboljšati storitev.',
-    tapStar: 'Izberite oceno',
     commentPlaceholder: 'Povejte nam kaj menite… (neobvezno)',
-    submit: 'Pošlji mnenje',
-    submitting: 'Pošiljam…',
-    thankYou: 'Hvala za vaše mnenje! 🙏',
-    thankYouSub: 'Vaše mnenje smo prejeli.',
-    errorSubmit: 'Napaka pri pošiljanju. Poskusite znova.',
+    reviewSubmit: 'Pošlji mnenje',
+    reviewSubmitting: 'Pošiljam…',
+    reviewThankYou: 'Hvala za vaše mnenje! 🙏',
+    reviewThankYouSub: 'Vaše mnenje smo prejeli.',
+    reviewError: 'Napaka pri pošiljanju. Poskusite znova.',
   },
   en: {
+    titleNotFound: 'Order not found',
+    titleStatus: 'Order status',
+    errorLabel: 'Error',
+    noOrderFound: 'No order found.',
+    orderNotFound: 'Order not found.',
+    goHome: 'Go to home page',
+    statusNew:        { title: 'Order Received',      subtitle: 'The kitchen has received your order and will start cooking soon.' },
+    statusPreparing:  { title: 'Getting Ready',       subtitle: 'The chef is preparing your meal with fresh ingredients right now.' },
+    statusReady:      { title: 'Order Up! 🔔',        subtitle: 'Your food is freshly cooked and ready to be served!' },
+    statusDone:       { title: 'Served! Enjoy 🍽',    subtitle: 'We hope you love it! Feel free to order more anytime.' },
+    statusCancelled:  { title: 'Cancelled',           subtitle: 'This order has been cancelled. Please speak with staff for details.' },
+    statusProcessing: { title: 'Processing…',         subtitle: 'Checking status…' },
+    yourOrderNumber: 'Your Order Number',
+    table: 'Table',
+    stepReceived:  'Received',
+    stepPreparing: 'Preparing',
+    stepOrderUp:   'Order Up!',
+    stepServed:    'Served',
+    orderItems: 'Order Items',
+    totalPrice: 'Total Price',
+    paymentLabel: 'Payment',
+    statusLabel: 'Status',
+    orderMore: 'Order more delicious food',
+    keepOpen: 'Keep this screen open to track your order in real-time!',
     howWasIt: 'How was your order?',
     reviewSubtitle: 'Your feedback helps us do better.',
-    tapStar: 'Select a rating',
     commentPlaceholder: 'Tell us what you think… (optional)',
-    submit: 'Submit review',
-    submitting: 'Submitting…',
-    thankYou: 'Thank you for your feedback! 🙏',
-    thankYouSub: 'We really appreciate it.',
-    errorSubmit: 'Failed to submit. Please try again.',
+    reviewSubmit: 'Submit review',
+    reviewSubmitting: 'Submitting…',
+    reviewThankYou: 'Thank you for your feedback! 🙏',
+    reviewThankYouSub: 'We really appreciate it.',
+    reviewError: 'Failed to submit. Please try again.',
   },
 };
+
+function getLang(): Lang {
+  return (localStorage.getItem('menu.lang') as Lang) ?? 'sl';
+}
 
 // ─── Star Picker ──────────────────────────────────────────────────────────────
 
@@ -76,15 +136,13 @@ function StarDisplay({ value }: { value: number }) {
 
 interface ReviewCardProps {
   orderId: string;
+  t: typeof T['en'];
   initialRating?: number;
   initialComment?: string;
   initialSubmitted?: boolean;
 }
 
-function ReviewCard({ orderId, initialRating = 0, initialComment = '', initialSubmitted = false }: ReviewCardProps) {
-  const lang = (localStorage.getItem('menu.lang') as 'sl' | 'en') ?? 'sl';
-  const rt = RT[lang];
-
+function ReviewCard({ orderId, t, initialRating = 0, initialComment = '', initialSubmitted = false }: ReviewCardProps) {
   const [rating, setRating] = useState(initialRating);
   const [comment, setComment] = useState(initialComment);
   const [submitting, setSubmitting] = useState(false);
@@ -104,7 +162,7 @@ function ReviewCard({ orderId, initialRating = 0, initialComment = '', initialSu
       setSubmitted(true);
     } catch (err) {
       console.error('Review submit error:', err);
-      setSubmitError(rt.errorSubmit);
+      setSubmitError(t.reviewError);
     }
     setSubmitting(false);
   }
@@ -133,8 +191,8 @@ function ReviewCard({ orderId, initialRating = 0, initialComment = '', initialSu
             >
               🙏
             </motion.div>
-            <p className="font-black text-gray-900 text-lg mb-1">{rt.thankYou}</p>
-            <p className="text-sm text-gray-400 mb-4">{rt.thankYouSub}</p>
+            <p className="font-black text-gray-900 text-lg mb-1">{t.reviewThankYou}</p>
+            <p className="text-sm text-gray-400 mb-4">{t.reviewThankYouSub}</p>
             <StarDisplay value={rating} />
             {comment.trim() && (
               <p className="text-sm text-gray-500 italic mt-3 leading-relaxed">
@@ -146,15 +204,13 @@ function ReviewCard({ orderId, initialRating = 0, initialComment = '', initialSu
           <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             {/* Header */}
             <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 px-6 py-4 text-center">
-              <p className="font-black text-gray-900 text-base">{rt.howWasIt}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{rt.reviewSubtitle}</p>
+              <p className="font-black text-gray-900 text-base">{t.howWasIt}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{t.reviewSubtitle}</p>
             </div>
 
             <div className="p-6 space-y-4">
-              {/* Stars */}
               <StarPicker value={rating} onChange={setRating} />
 
-              {/* Comment (only after star selected) */}
               <AnimatePresence>
                 {rating > 0 && (
                   <motion.div
@@ -165,7 +221,7 @@ function ReviewCard({ orderId, initialRating = 0, initialComment = '', initialSu
                   >
                     <textarea
                       className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-900 outline-none focus:border-orange-400 transition-colors resize-none font-medium"
-                      placeholder={rt.commentPlaceholder}
+                      placeholder={t.commentPlaceholder}
                       rows={3}
                       value={comment}
                       onChange={(e) => setComment(e.target.value)}
@@ -183,7 +239,7 @@ function ReviewCard({ orderId, initialRating = 0, initialComment = '', initialSu
                 disabled={rating === 0 || submitting}
                 className="w-full bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-2xl text-sm disabled:opacity-40 transition-all active:scale-[0.98] shadow-sm"
               >
-                {submitting ? rt.submitting : rt.submit}
+                {submitting ? t.reviewSubmitting : t.reviewSubmit}
               </button>
             </div>
           </motion.div>
@@ -201,51 +257,42 @@ export default function OrderSuccessPage() {
   const sessionId = searchParams.get('session_id');
   const orderId = searchParams.get('order_id');
 
+  const [lang] = useState<Lang>(getLang);
+  const t = T[lang];
+
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState('');
-  // Track whether we've already pre-filled the review card from existing data
   const [existingReview, setExistingReview] = useState<{ rating: number; comment: string } | null>(null);
-  // Show review card whenever order reaches 'done' status (real-time or on load)
   const [showReview, setShowReview] = useState(false);
   const reviewRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to review card as soon as it appears
   useEffect(() => {
     if (!showReview) return;
-    // Wait for the motion entrance animation to begin (300 ms),
-    // then smoothly scroll the card into view
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 300);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [showReview]);
 
   useDocumentTitle(
     error
-      ? 'Order not found'
+      ? t.titleNotFound
       : order
-        ? `Order #${String(order.orderNumber).padStart(3, '0')} · ${order.status}`
-        : 'Order status',
+        ? `#${String(order.orderNumber).padStart(3, '0')} · ${t.titleStatus}`
+        : t.titleStatus,
   );
 
   useEffect(() => {
-    if (!orderId) { setError('No order found.'); return; }
+    if (!orderId) { setError(t.noOrderFound); return; }
     const unsub = onValue(refs.order(orderId), (snap) => {
-      if (!snap.exists()) { setError('Order not found.'); return; }
+      if (!snap.exists()) { setError(t.orderNotFound); return; }
       const o = { id: orderId, ...snap.val() } as Order;
       setOrder(o);
-
-      if (o.status === 'new' && sessionId) {
-        updateOrderStatus(orderId, 'new');
-      }
-
-      // Show review card when order is served
+      if (o.status === 'new' && sessionId) updateOrderStatus(orderId, 'new');
       if (o.status === 'done') {
         setShowReview(true);
-        // If review already exists (page refresh after submitting), capture it
-        if (o.review) {
-          setExistingReview({ rating: o.review.rating, comment: o.review.comment });
-        }
+        if (o.review) setExistingReview({ rating: o.review.rating, comment: o.review.comment });
       }
     });
     return () => unsub();
@@ -255,13 +302,13 @@ export default function OrderSuccessPage() {
     <div className="min-h-screen flex flex-col items-center justify-center px-6 text-center bg-gray-50">
       <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 max-w-sm w-full">
         <XCircle size={64} className="text-red-500 mx-auto mb-4" />
-        <p className="text-gray-700 font-semibold mb-2">Error</p>
+        <p className="text-gray-700 font-semibold mb-2">{t.errorLabel}</p>
         <p className="text-gray-500 text-sm mb-6">{error}</p>
         <button
           onClick={() => navigate('/')}
           className="w-full bg-orange-500 text-white font-semibold py-3.5 rounded-2xl transition-all hover:bg-orange-600 active:scale-[0.98]"
         >
-          Go to home page
+          {t.goHome}
         </button>
       </div>
     </div>
@@ -269,63 +316,48 @@ export default function OrderSuccessPage() {
 
   if (!order) return <OrderSuccessSkeleton />;
 
+  // ── Status config ─────────────────────────────────────────────────────────
   const statusConfig = {
     new: {
-      step: 1,
-      title: 'Order Received',
-      subtitle: 'The kitchen has received your order and will start cooking soon.',
-      color: 'text-orange-500 bg-orange-50 border-orange-100',
+      step: 1, color: 'text-orange-500 bg-orange-50 border-orange-100',
+      ...t.statusNew,
       icon: <Clock className="w-10 h-10 text-orange-500 animate-pulse" />,
     },
     preparing: {
-      step: 2,
-      title: 'Getting Ready',
-      subtitle: 'The chef is preparing your meal with fresh ingredients right now.',
-      color: 'text-blue-500 bg-blue-50 border-blue-100',
+      step: 2, color: 'text-blue-500 bg-blue-50 border-blue-100',
+      ...t.statusPreparing,
       icon: <ChefHat className="w-10 h-10 text-blue-500 animate-bounce" />,
     },
     ready: {
-      step: 3,
-      title: 'Order Up! 🔔',
-      subtitle: 'Your food is freshly cooked and ready to be served or collected!',
-      color: 'text-green-500 bg-green-50 border-green-100',
+      step: 3, color: 'text-green-500 bg-green-50 border-green-100',
+      ...t.statusReady,
       icon: <BellRing className="w-10 h-10 text-green-500 animate-bounce" />,
     },
     done: {
-      step: 4,
-      title: 'Served! Enjoy 🍽',
-      subtitle: 'We hope you love it! Feel free to order more anytime.',
-      color: 'text-gray-600 bg-gray-50 border-gray-100',
+      step: 4, color: 'text-gray-600 bg-gray-50 border-gray-100',
+      ...t.statusDone,
       icon: <CheckCircle className="w-10 h-10 text-green-600" />,
     },
     cancelled: {
-      step: 0,
-      title: 'Cancelled',
-      subtitle: 'This order has been cancelled. Please speak with staff for details.',
-      color: 'text-red-500 bg-red-50 border-red-100',
+      step: 0, color: 'text-red-500 bg-red-50 border-red-100',
+      ...t.statusCancelled,
       icon: <XCircle className="w-10 h-10 text-red-500" />,
     },
-  }[order.status] || {
-    step: 1,
-    title: 'Processing',
-    subtitle: 'Checking status...',
-    color: 'text-gray-500 bg-gray-50 border-gray-100',
+  }[order.status] ?? {
+    step: 1, color: 'text-gray-500 bg-gray-50 border-gray-100',
+    ...t.statusProcessing,
     icon: <Clock className="w-10 h-10 text-gray-500 animate-spin" />,
   };
 
   const steps = [
-    { num: 1, label: 'Received', status: 'new' },
-    { num: 2, label: 'Preparing', status: 'preparing' },
-    { num: 3, label: 'Order Up!', status: 'ready' },
-    { num: 4, label: 'Served', status: 'done' },
+    { num: 1, label: t.stepReceived },
+    { num: 2, label: t.stepPreparing },
+    { num: 3, label: t.stepOrderUp },
+    { num: 4, label: t.stepServed },
   ];
 
   let parsedItems: CartItem[] = [];
-  try {
-    parsedItems = JSON.parse(order.items);
-  } catch {
-    // fallback if string parsed items fail
-  }
+  try { parsedItems = JSON.parse(order.items); } catch { /* fallback */ }
 
   return (
     <div className="min-h-screen bg-gray-50 py-10 px-4 flex flex-col items-center justify-center">
@@ -333,6 +365,7 @@ export default function OrderSuccessPage() {
 
         {/* ── Main order card ── */}
         <div className="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
+
           {/* Status Header */}
           <div className={`p-6 border-b border-gray-100 flex flex-col items-center text-center ${statusConfig.color}`}>
             <div className="p-3 bg-white rounded-2xl shadow-sm mb-4 border border-inherit">
@@ -343,15 +376,18 @@ export default function OrderSuccessPage() {
           </div>
 
           <div className="p-6 space-y-6">
+
             {/* Order number */}
             <div className="bg-gray-50 rounded-2xl p-4 text-center border border-gray-100">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1">Your Order Number</span>
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1">
+                {t.yourOrderNumber}
+              </span>
               <span className="text-5xl font-black text-orange-500">
                 #{String(order.orderNumber).padStart(3, '0')}
               </span>
               {order.tableNumber != null && (
                 <span className="mt-2 inline-block bg-orange-100 text-orange-700 text-xs font-bold px-3 py-1 rounded-full">
-                  Table {order.tableNumber}
+                  {t.table} {order.tableNumber}
                 </span>
               )}
             </div>
@@ -393,7 +429,7 @@ export default function OrderSuccessPage() {
 
             {/* Order Details */}
             <div className="border-t border-gray-100 pt-5 space-y-4">
-              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wider">Order Items</h3>
+              <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wider">{t.orderItems}</h3>
               <div className="space-y-2.5 max-h-44 overflow-y-auto pr-1">
                 {parsedItems.length > 0 ? (
                   parsedItems.map((item, i) => (
@@ -405,7 +441,9 @@ export default function OrderSuccessPage() {
                           {item.modifiers && <p className="text-xs text-gray-400 mt-0.5">{item.modifiers}</p>}
                         </div>
                       </div>
-                      <span className="text-gray-800 text-sm font-bold">€{(item.price * item.quantity).toFixed(2)}</span>
+                      <span className="text-gray-800 text-sm font-bold">
+                        €{(item.price * item.quantity).toFixed(2)}
+                      </span>
                     </div>
                   ))
                 ) : (
@@ -414,42 +452,43 @@ export default function OrderSuccessPage() {
               </div>
 
               <div className="border-t border-gray-100 pt-4 flex justify-between items-center">
-                <span className="text-sm font-bold text-gray-700">Total Price</span>
+                <span className="text-sm font-bold text-gray-700">{t.totalPrice}</span>
                 <span className="text-lg font-black text-gray-900">€{order.totalPrice.toFixed(2)}</span>
               </div>
 
               <div className="bg-orange-50/50 rounded-2xl p-3 flex justify-between text-xs text-orange-800 border border-orange-100/50">
-                <span>Payment: <strong className="uppercase">{order.paymentType}</strong></span>
-                <span>Status: <strong className="uppercase">{order.status}</strong></span>
+                <span>{t.paymentLabel}: <strong className="uppercase">{order.paymentType}</strong></span>
+                <span>{t.statusLabel}: <strong className="uppercase">{order.status}</strong></span>
               </div>
             </div>
 
-            {/* Action Buttons */}
+            {/* Action */}
             <div className="pt-2 space-y-3">
               <button
                 onClick={() => navigate(`/order?r=${order.restaurantId}&t=${order.tableNumber ?? ''}`)}
                 className="w-full bg-orange-500 text-white font-bold py-4 rounded-2xl text-base shadow-sm transition-all hover:bg-orange-600 active:scale-[0.98] flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-5 h-5" />
-                Order more delicious food
+                {t.orderMore}
               </button>
 
               {order.status !== 'done' && (
                 <div className="text-center">
-                  <p className="text-xs text-gray-400">Keep this screen open to track your order in real-time!</p>
+                  <p className="text-xs text-gray-400">{t.keepOpen}</p>
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* ── Review card — animates in when order is served ── */}
+        {/* ── Review card — slides in when order is served ── */}
         <AnimatePresence>
           {showReview && orderId && (
             <div ref={reviewRef}>
               <ReviewCard
                 key="review"
                 orderId={orderId}
+                t={t}
                 initialRating={existingReview?.rating}
                 initialComment={existingReview?.comment}
                 initialSubmitted={!!existingReview}
