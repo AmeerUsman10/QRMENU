@@ -66,6 +66,8 @@ const T = {
     permissionError: 'Napaka dostopa. Dodajte ?r=id_restavracije v URL.',
     statusDone: 'končano',
     statusCancelled: 'preklicano',
+    customerReview: 'Mnenje stranke',
+    noComment: '(brez komentarja)',
     sAgo: (n: number) => `${n}s nazaj`,
     mAgo: (n: number) => `${n}m nazaj`,
     hmAgo: (h: number, m: number) => `${h}h ${m}m nazaj`,
@@ -109,6 +111,8 @@ const T = {
     permissionError: 'Permission error. Add ?r=restaurant_id to the URL.',
     statusDone: 'done',
     statusCancelled: 'cancelled',
+    customerReview: 'Customer Review',
+    noComment: '(no comment)',
     sAgo: (n: number) => `${n}s ago`,
     mAgo: (n: number) => `${n}m ago`,
     hmAgo: (h: number, m: number) => `${h}h ${m}m ago`,
@@ -900,27 +904,57 @@ export default function KitchenPage() {
             ) : (
               <div className="space-y-3">
                 {history.map((o) => (
-                  <div key={o.id} className="bg-white rounded-2xl p-4 border border-gray-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg font-black text-gray-900">#{String(o.orderNumber).padStart(3, '0')}</span>
-                        {o.tableNumber != null && (
-                          <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded-lg">
-                            {t.table} {o.tableNumber}
+                  <div key={o.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
+                    o.review ? 'border-yellow-200' : 'border-gray-200'
+                  }`}>
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg font-black text-gray-900">#{String(o.orderNumber).padStart(3, '0')}</span>
+                          {o.tableNumber != null && (
+                            <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded-lg">
+                              {t.table} {o.tableNumber}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">{formatTime(o.timestamp)}</span>
+                          <span className={`text-xs px-2.5 py-1 rounded-lg font-bold uppercase ${
+                            o.status === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
+                          }`}>
+                            {o.status === 'done' ? t.statusDone : t.statusCancelled}
                           </span>
-                        )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">{formatTime(o.timestamp)}</span>
-                        <span className={`text-xs px-2.5 py-1 rounded-lg font-bold uppercase ${
-                          o.status === 'done' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                        }`}>
-                          {o.status === 'done' ? t.statusDone : t.statusCancelled}
-                        </span>
-                      </div>
+                      <p className="text-sm text-gray-500">{o.itemsReadable}</p>
+                      <p className="text-base font-black text-gray-900 mt-1">€{o.totalPrice.toFixed(2)}</p>
                     </div>
-                    <p className="text-sm text-gray-500">{o.itemsReadable}</p>
-                    <p className="text-base font-black text-gray-900 mt-1">€{o.totalPrice.toFixed(2)}</p>
+
+                    {/* ── Customer review ── */}
+                    {o.review && (
+                      <div className="border-t border-yellow-100 bg-yellow-50 px-4 py-3">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-yellow-600">
+                            {t.customerReview}
+                          </p>
+                          {/* Stars */}
+                          <div className="flex gap-0.5">
+                            {[1, 2, 3, 4, 5].map((s) => (
+                              <span
+                                key={s}
+                                className="text-sm leading-none"
+                                style={{ filter: s <= o.review!.rating ? 'none' : 'grayscale(1) opacity(0.2)' }}
+                              >
+                                ⭐
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-xs text-yellow-800 font-medium leading-relaxed">
+                          {o.review.comment?.trim() || <span className="text-yellow-400 italic">{t.noComment}</span>}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

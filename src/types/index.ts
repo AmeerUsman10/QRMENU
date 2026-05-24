@@ -52,6 +52,12 @@ export interface CartItem {
   modifiers?: string;
 }
 
+export interface OrderReview {
+  rating: number;   // 1–5
+  comment: string;
+  timestamp: number;
+}
+
 export interface Order {
   id: string;
   restaurantId: string;
@@ -70,4 +76,5 @@ export interface Order {
   stripeSessionId?: string;
   paymentStatus?: string;
   paidAt?: number;
+  review?: OrderReview;
 }

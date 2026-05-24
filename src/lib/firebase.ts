@@ -58,6 +58,13 @@ export async function updateOrderStatus(orderId: string, status: Order['status']
   await update(ref(db, `orders/${orderId}`), { status });
 }
 
+export async function submitOrderReview(
+  orderId: string,
+  review: { rating: number; comment: string; timestamp: number },
+): Promise<void> {
+  await update(ref(db, `orders/${orderId}`), { review });
+}
+
 export async function getRestaurant(id: string): Promise<Restaurant | null> {
   const snap = await get(refs.restaurant(id));
   if (!snap.exists()) return null;
