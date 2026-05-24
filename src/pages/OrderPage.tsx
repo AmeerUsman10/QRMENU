@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Plus, Minus, UtensilsCrossed, CheckCircle } from 'lucide-react';
+import { X, Plus, Minus, UtensilsCrossed, CheckCircle, Search, ArrowLeft } from 'lucide-react';
 import { onValue } from 'firebase/database';
 import { refs, placeOrder } from '../lib/firebase';
 import { useCartStore } from '../store/cartStore';
@@ -54,6 +54,10 @@ const T = {
     addToOrder: 'Dodaj v naročilo',
     pleaseSelect: 'Izberite',
     orderError: 'Naročila ni bilo mogoče oddati. Poskusite znova.',
+    searchPlaceholder: 'Iščite jedi…',
+    noResults: 'Ni rezultatov',
+    noResultsSub: 'Poskusite z drugim izrazom',
+    searchResultsFor: (n: number, q: string) => `${n} ${n === 1 ? 'rezultat' : 'rezultati'} za "${q}"`,
   },
   en: {
     loading: 'Loading menu',
@@ -94,6 +98,10 @@ const T = {
     addToOrder: 'Add to order',
     pleaseSelect: 'Please select',
     orderError: 'Failed to place order. Please try again.',
+    searchPlaceholder: 'Search dishes…',
+    noResults: 'No results',
+    noResultsSub: 'Try a different search term',
+    searchResultsFor: (n: number, q: string) => `${n} result${n !== 1 ? 's' : ''} for "${q}"`,
   },
 };
 
@@ -130,6 +138,27 @@ function LangPill({ lang, onChange }: { lang: Lang; onChange: (l: Lang) => void 
         ENG
       </button>
     </div>
+  );
+}
+
+// ─── Highlight matching text ──────────────────────────────────────────────────
+
+function Highlight({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+          <mark key={i} className="bg-orange-100 text-orange-700 not-italic rounded-sm px-0.5 font-black">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
   );
 }
 
@@ -612,8 +641,23 @@ export default function OrderPage() {
   const [modifierItem, setModifierItem] = useState<MenuItem | null>(null);
   const [confirmedOrder, setConfirmedOrder] = useState<{ id: string; number: number } | null>(null);
 
+  const [searchActive, setSearchActive] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   const { addItem, itemCount, totalFormatted, setContext } = useCartStore();
   const categoryRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  function openSearch() {
+    setSearchActive(true);
+    setSearchQuery('');
+    // Focus after the animation frame so the input is in the DOM
+    setTimeout(() => searchInputRef.current?.focus(), 80);
+  }
+  function closeSearch() {
+    setSearchActive(false);
+    setSearchQuery('');
+  }
 
   useDocumentTitle(
     error
@@ -729,10 +773,18 @@ export default function OrderPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
 
-      {/* ── Language switcher — fixed top-right, always visible ── */}
-      <div className="fixed top-3 right-4 z-20">
-        <LangPill lang={lang} onChange={switchLang} />
-      </div>
+      {/* ── Language switcher — hidden while search is open ── */}
+      <AnimatePresence>
+        {!searchActive && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed top-3 right-4 z-20"
+          >
+            <LangPill lang={lang} onChange={switchLang} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Hero ── */}
       <div className="bg-white border-b border-gray-100 px-4 pt-10 pb-8 text-center shadow-sm">
@@ -752,131 +804,256 @@ export default function OrderPage() {
         )}
       </div>
 
-      {/* ── Sticky category bar + lang switcher ── */}
+      {/* ── Sticky bar: categories ↔ search ── */}
       <div className="sticky top-0 z-10 bg-white border-b border-gray-100 shadow-sm">
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 py-2.5">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => scrollToCategory(cat)}
-              className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-black transition-all ${
-                activeCategory === cat
-                  ? 'bg-orange-500 text-white shadow-sm'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
+        <AnimatePresence mode="wait" initial={false}>
+          {searchActive ? (
+            /* ── Search input ── */
+            <motion.div
+              key="search"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="flex items-center gap-2 px-3 py-2"
             >
-              {cat}
-            </button>
-          ))}
-        </div>
+              <button
+                onClick={closeSearch}
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 flex-shrink-0"
+              >
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex-1 flex items-center bg-gray-100 rounded-2xl px-3 gap-2">
+                <Search size={15} className="text-gray-400 flex-shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t.searchPlaceholder}
+                  className="flex-1 bg-transparent py-2.5 text-sm text-gray-900 outline-none font-medium placeholder-gray-400"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="flex-shrink-0 text-gray-400 hover:text-gray-600">
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          ) : (
+            /* ── Category pills + search icon ── */
+            <motion.div
+              key="cats"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.18 }}
+              className="flex items-center gap-2 px-4 py-2.5"
+            >
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide flex-1">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => scrollToCategory(cat)}
+                    className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-black transition-all ${
+                      activeCategory === cat
+                        ? 'bg-orange-500 text-white shadow-sm'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              {/* Search trigger */}
+              <button
+                onClick={openSearch}
+                className="flex-shrink-0 w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+                aria-label="Search"
+              >
+                <Search size={17} className="text-gray-500" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ── Menu ── */}
       <div className="px-4 pt-5">
-        {categories.map((cat) => {
-          const catItems = menuItems.filter((i) => i.category === cat);
-          if (!catItems.length) return null;
-          return (
-            <div
-              key={cat}
-              ref={(el) => { categoryRefs.current[cat] = el; }}
-              className="mb-7"
-            >
-              <h2 className="text-base font-black text-gray-900 mb-3 uppercase tracking-wide">
-                {cat}
-              </h2>
-              <div className="space-y-2.5">
-                {catItems.map((item, idx) => (
-                  <motion.button
-                    key={item.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.04, duration: 0.25 }}
-                    onClick={() => handleItemTap(item)}
-                    disabled={!item.available}
-                    className={`w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] ${
-                      !item.available ? 'opacity-50' : 'hover:shadow-md'
-                    }`}
-                  >
-                    {/* Item image */}
-                    {item.image && (
-                      <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    )}
-
-                    {/* Item info */}
-                    <div className="flex-1 min-w-0 p-3 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-start gap-2 justify-between">
-                          <p className="font-black text-gray-900 text-sm leading-snug flex-1">
-                            {item.name}
-                          </p>
-                          {item.popular && (
-                            <span className="flex-shrink-0 text-[10px] bg-orange-100 text-orange-500 px-2 py-0.5 rounded-full font-black">
-                              {t.popular}
+        {searchActive ? (
+          /* ── Search results ── */
+          (() => {
+            const q = searchQuery.trim();
+            if (!q) return (
+              <div className="text-center py-20 text-gray-400">
+                <Search size={36} className="mx-auto mb-3 opacity-30" />
+                <p className="font-semibold text-sm">{t.searchPlaceholder}</p>
+              </div>
+            );
+            const results = menuItems.filter((i) =>
+              i.available && (
+                i.name.toLowerCase().includes(q.toLowerCase()) ||
+                i.description?.toLowerCase().includes(q.toLowerCase())
+              )
+            );
+            if (!results.length) return (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className="text-center py-20 text-gray-400"
+              >
+                <p className="text-4xl mb-3">🔍</p>
+                <p className="font-black text-gray-700">{t.noResults}</p>
+                <p className="text-sm mt-1">{t.noResultsSub}</p>
+              </motion.div>
+            );
+            return (
+              <div>
+                <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3">
+                  {t.searchResultsFor(results.length, q)}
+                </p>
+                <div className="space-y-2.5">
+                  {results.map((item, idx) => (
+                    <motion.button
+                      key={item.id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.03, duration: 0.2 }}
+                      onClick={() => handleItemTap(item)}
+                      className="w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
+                    >
+                      {item.image && (
+                        <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
+                          <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0 p-3 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-start gap-2 justify-between mb-1">
+                            <p className="font-black text-gray-900 text-sm leading-snug flex-1">
+                              <Highlight text={item.name} query={q} />
+                            </p>
+                            {/* Category badge */}
+                            <span className="flex-shrink-0 text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-bold">
+                              {item.category}
                             </span>
+                          </div>
+                          {item.description && (
+                            <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">
+                              <Highlight text={item.description} query={q} />
+                            </p>
                           )}
                         </div>
-                        {item.description && (
-                          <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
-                            {item.description}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex items-center justify-between mt-2">
-                        <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
-                        {!item.available ? (
-                          <span className="text-xs text-gray-400 font-medium">{t.unavailable}</span>
-                        ) : (
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
                           <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center shadow-sm flex-shrink-0">
                             <Plus size={17} className="text-white" />
                           </div>
+                        </div>
+                      </div>
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()
+        ) : (
+          /* ── Normal category view ── */
+          <>
+            {categories.map((cat) => {
+              const catItems = menuItems.filter((i) => i.category === cat);
+              if (!catItems.length) return null;
+              return (
+                <div
+                  key={cat}
+                  ref={(el) => { categoryRefs.current[cat] = el; }}
+                  className="mb-7"
+                >
+                  <h2 className="text-base font-black text-gray-900 mb-3 uppercase tracking-wide">
+                    {cat}
+                  </h2>
+                  <div className="space-y-2.5">
+                    {catItems.map((item, idx) => (
+                      <motion.button
+                        key={item.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.04, duration: 0.25 }}
+                        onClick={() => handleItemTap(item)}
+                        disabled={!item.available}
+                        className={`w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] ${
+                          !item.available ? 'opacity-50' : 'hover:shadow-md'
+                        }`}
+                      >
+                        {item.image && (
+                          <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
+                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                          </div>
                         )}
-                      </div>
-                    </div>
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
+                        <div className="flex-1 min-w-0 p-3 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-start gap-2 justify-between">
+                              <p className="font-black text-gray-900 text-sm leading-snug flex-1">{item.name}</p>
+                              {item.popular && (
+                                <span className="flex-shrink-0 text-[10px] bg-orange-100 text-orange-500 px-2 py-0.5 rounded-full font-black">
+                                  {t.popular}
+                                </span>
+                              )}
+                            </div>
+                            {item.description && (
+                              <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
+                                {item.description}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
+                            {!item.available ? (
+                              <span className="text-xs text-gray-400 font-medium">{t.unavailable}</span>
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center shadow-sm flex-shrink-0">
+                                <Plus size={17} className="text-white" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </motion.button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
 
-        {/* Uncategorised items */}
-        {(() => {
-          const uncategorized = menuItems.filter((i) => !categories.includes(i.category));
-          if (!uncategorized.length) return null;
-          return (
-            <div className="mb-7">
-              <h2 className="text-base font-black text-gray-900 mb-3 uppercase tracking-wide">
-                {t.other}
-              </h2>
-              <div className="space-y-2.5">
-                {uncategorized.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => handleItemTap(item)}
-                    className="w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
-                  >
-                    {item.image && (
-                      <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
-                        <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                      </div>
-                    )}
-                    <div className="flex-1 p-3 flex flex-col justify-between">
-                      <p className="font-black text-gray-900 text-sm">{item.name}</p>
-                      <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
+            {/* Uncategorised items */}
+            {(() => {
+              const uncategorized = menuItems.filter((i) => !categories.includes(i.category));
+              if (!uncategorized.length) return null;
+              return (
+                <div className="mb-7">
+                  <h2 className="text-base font-black text-gray-900 mb-3 uppercase tracking-wide">{t.other}</h2>
+                  <div className="space-y-2.5">
+                    {uncategorized.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => handleItemTap(item)}
+                        className="w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
+                      >
+                        {item.image && (
+                          <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
+                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                          </div>
+                        )}
+                        <div className="flex-1 p-3 flex flex-col justify-between">
+                          <p className="font-black text-gray-900 text-sm">{item.name}</p>
+                          <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </>
+        )}
       </div>
 
       {/* ── Floating cart button ── */}
