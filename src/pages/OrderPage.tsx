@@ -773,21 +773,8 @@ export default function OrderPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-28">
 
-      {/* ── Language switcher — hidden while search is open ── */}
-      <AnimatePresence>
-        {!searchActive && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="fixed top-3 right-4 z-20"
-          >
-            <LangPill lang={lang} onChange={switchLang} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* ── Hero ── */}
-      <div className="bg-white border-b border-gray-100 px-4 pt-10 pb-8 text-center shadow-sm">
+      <div className="bg-white border-b border-gray-100 px-4 pt-8 pb-8 text-center shadow-sm">
         {restaurant.logo && (
           <div className="w-20 h-20 rounded-2xl overflow-hidden bg-gray-100 shadow-md mx-auto mb-4">
             <img src={restaurant.logo} alt={restaurant.name} className="w-full h-full object-cover" />
@@ -865,6 +852,11 @@ export default function OrderPage() {
                   </button>
                 ))}
               </div>
+              {/* Lang pill — always visible, anchored in the bar */}
+              <div className="flex-shrink-0">
+                <LangPill lang={lang} onChange={switchLang} />
+              </div>
+
               {/* Search trigger */}
               <button
                 onClick={openSearch}
