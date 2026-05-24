@@ -266,9 +266,12 @@ export default function OrderSuccessPage() {
   const [showReview, setShowReview] = useState(false);
   const reviewRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to review card as soon as it appears
+  // Auto-scroll to review card only when it's a fresh prompt (no review yet).
+  // If the order already has a review (page refresh / returning customer),
+  // the card shows passively at the bottom — no scroll hijack.
   useEffect(() => {
     if (!showReview) return;
+    if (existingReview) return;
     const timer = setTimeout(() => {
       reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 300);
