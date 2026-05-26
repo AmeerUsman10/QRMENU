@@ -461,7 +461,7 @@ function ShiftSummaryBar({ history, t }: { history: Order[]; t: typeof T['en'] }
 
 interface PinEntryProps {
   restaurantId: string | null;
-  onSuccess: (restaurantId: string | null, restaurantName: string) => void;
+  onSuccess: (restaurantId: string | null, restaurantName: string, logo?: string) => void;
   onAudioUnlock: () => void;
   t: typeof T['en'];
 }
@@ -500,7 +500,7 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
         const snap = await get(refs.restaurant(restaurantId));
         if (snap.exists()) {
           const r = snap.val() as Restaurant;
-          if (r.kitchenPin === pin) { onSuccess(restaurantId, r.name); }
+          if (r.kitchenPin === pin) { onSuccess(restaurantId, r.name, r.logo); }
           else setError(t.incorrectPin);
         } else setError(t.restaurantNotFound);
       } else {
@@ -509,7 +509,7 @@ function PinEntry({ restaurantId, onSuccess, onAudioUnlock, t }: PinEntryProps) 
           let found = false;
           snap.forEach((child) => {
             const r = child.val() as Restaurant;
-            if (r.kitchenPin === pin) { onSuccess(child.key!, r.name); found = true; }
+            if (r.kitchenPin === pin) { onSuccess(child.key!, r.name, r.logo); found = true; }
           });
           if (!found) setError(t.incorrectPin);
         } else setError(t.noRestaurants);
@@ -581,7 +581,7 @@ export default function KitchenPage() {
   // an unbroken gray screen → PIN page, with zero visible transition artefacts.
   const [ready, setReady] = useState(false);
 
-  const [auth, setAuth] = useState<{ restaurantId: string | null; name: string } | null>(null);
+  const [auth, setAuth] = useState<{ restaurantId: string | null; name: string; logo: string } | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [history, setHistory] = useState<Order[]>([]);
   const [tab, setTab] = useState<'active' | 'history'>('active');
@@ -716,7 +716,7 @@ export default function KitchenPage() {
     return (
       <PinEntry
         restaurantId={restaurantId}
-        onSuccess={(id, name) => setAuth({ restaurantId: id, name })}
+        onSuccess={(id, name, logo) => setAuth({ restaurantId: id, name, logo: logo ?? '' })}
         onAudioUnlock={() => setAudioUnlocked(true)}
         t={t}
       />
@@ -753,8 +753,15 @@ export default function KitchenPage() {
           {/* Left: empty spacer — mirrors right side so name stays centred */}
           <div className="flex-1" />
 
-          {/* Center: restaurant name */}
-          <div className="flex-none text-center px-3">
+          {/* Center: logo + restaurant name */}
+          <div className="flex-none flex flex-col items-center px-3">
+            {auth.logo && (
+              <img
+                src={auth.logo}
+                alt={auth.name}
+                className="h-8 w-8 rounded-lg object-cover mb-1 shadow-sm"
+              />
+            )}
             <h1 className="font-black text-xl leading-tight tracking-tight text-gray-900">{auth.name}</h1>
             <p className="text-orange-500 text-[10px] font-bold uppercase tracking-widest">{t.kitchenDisplay}</p>
           </div>

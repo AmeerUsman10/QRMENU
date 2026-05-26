@@ -3,14 +3,15 @@ import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, UtensilsCrossed, QrCode, Settings, LogOut,
-  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package, Upload, ImageIcon
+  Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package, Upload, ImageIcon,
+  BarChart2, TrendingUp, ShoppingBag, Star, Clock
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as storageRef, uploadBytes, getDownloadURL, getBytes } from 'firebase/storage';
 import { auth, refs, storage } from '../lib/firebase';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Restaurant, MenuItem, Order } from '../types';
@@ -217,11 +218,34 @@ function useRestaurantForUser(): [Restaurant | null, boolean] {
 
 function formatPrice(n: number) { return `€${n.toFixed(2)}`; }
 
+// ─── Image helpers ────────────────────────────────────────────────────────────
+
+/** Compress an image file to a small base64 data URL (for canvas/QR use, no CORS needed). */
+async function compressToDataUrl(file: File, maxPx = 300, quality = 0.85): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(maxPx / img.width, maxPx / img.height, 1);
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(img.width  * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = e.target!.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // ─── Image Uploader ───────────────────────────────────────────────────────────
 
-function ImageUploader({ value, onChange, path }: {
+function ImageUploader({ value, onChange, onDataUrl, path }: {
   value: string;
   onChange: (url: string) => void;
+  onDataUrl?: (dataUrl: string) => void;
   path: string; // e.g. "logos/shakespeare-pub" or "menu-items/abc123"
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -239,6 +263,13 @@ function ImageUploader({ value, onChange, path }: {
       await uploadBytes(sRef, file);
       const url = await getDownloadURL(sRef);
       onChange(url);
+      // Also compress and emit data URL (for canvas / QR cards, bypasses CORS)
+      if (onDataUrl) {
+        try {
+          const dataUrl = await compressToDataUrl(file);
+          onDataUrl(dataUrl);
+        } catch { /* non-fatal */ }
+      }
     } catch (e) {
       setError('Upload failed. Please try again.');
     }
@@ -627,46 +658,288 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
 
 // ─── QR Generator ─────────────────────────────────────────────────────────────
 
+// Load image → HTMLImageElement.
+// • data: URLs are used directly (no network, no CORS — the fast path).
+// • Firebase Storage URLs: try getBytes() with a 6 s timeout, then fetch fallback.
+async function loadImg(src: string): Promise<HTMLImageElement> {
+  let dataUrl: string;
+
+  if (src.startsWith('data:')) {
+    dataUrl = src;
+  } else {
+    try {
+      const match = src.match(/firebasestorage\.googleapis\.com\/.*\/o\/(.+?)(?:\?|$)/);
+      if (!match) throw new Error('Not a Firebase Storage URL');
+      const path = decodeURIComponent(match[1]);
+      // Race getBytes against a 6-second timeout so it can never hang forever
+      const bytes = await Promise.race([
+        getBytes(storageRef(storage, path)),
+        new Promise<never>((_, r) => setTimeout(() => r(new Error('getBytes timeout')), 6000)),
+      ]);
+      dataUrl = await new Promise<string>((res, rej) => {
+        const reader = new FileReader();
+        reader.onload  = () => res(reader.result as string);
+        reader.onerror = rej;
+        reader.readAsDataURL(new Blob([bytes]));
+      });
+    } catch {
+      try {
+        const resp = await fetch(src);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        dataUrl = await new Promise<string>((res, rej) => {
+          const reader = new FileReader();
+          reader.onload  = () => res(reader.result as string);
+          reader.onerror = rej;
+          reader.readAsDataURL(blob);
+        });
+      } catch {
+        throw new Error(`Failed to load image: ${src}`);
+      }
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload  = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+async function buildBrandedQR(
+  url: string,
+  tableLabel: string,
+  restaurant: { name: string; logo?: string; logoBase64?: string },
+): Promise<string> {
+  const S    = 2;                  // retina scale
+  const CW   = 500 * S;
+  const CH   = 720 * S;
+
+  // ── 1. Generate clean QR (no logo overlay — keeps it crisp & scannable) ──
+  const QR_SIZE = 340 * S;
+  const qrDataUrl = await QRCode.toDataURL(url, {
+    width: QR_SIZE,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+    color: { dark: '#111827', light: '#ffffff' },
+  });
+
+  const canvas  = document.createElement('canvas');
+  canvas.width  = CW;
+  canvas.height = CH;
+  const ctx     = canvas.getContext('2d')!;
+
+  // ── 2. Full card: dark gradient background ──
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, CH);
+  bgGrad.addColorStop(0, '#1c1917');   // warm dark
+  bgGrad.addColorStop(1, '#0c0a09');
+  ctx.fillStyle = bgGrad;
+  roundRect(ctx, 0, 0, CW, CH, 36 * S);
+  ctx.fill();
+
+  // ── 3. Subtle orange glow top-center ──
+  const glow = ctx.createRadialGradient(CW / 2, 0, 0, CW / 2, 0, 280 * S);
+  glow.addColorStop(0, 'rgba(249,115,22,0.18)');
+  glow.addColorStop(1, 'rgba(249,115,22,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, CW, CH);
+
+  // ── 4. Large logo — prominent, centered at top ──
+  const LOGO_R  = 54 * S;   // radius
+  const logoCX  = CW / 2;
+  const logoCY  = 100 * S;
+
+  // Outer glow ring
+  const ringGlow = ctx.createRadialGradient(logoCX, logoCY, LOGO_R, logoCX, logoCY, LOGO_R + 20 * S);
+  ringGlow.addColorStop(0, 'rgba(249,115,22,0.5)');
+  ringGlow.addColorStop(1, 'rgba(249,115,22,0)');
+  ctx.fillStyle = ringGlow;
+  ctx.beginPath();
+  ctx.arc(logoCX, logoCY, LOGO_R + 20 * S, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Orange ring
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth   = 4 * S;
+  ctx.beginPath();
+  ctx.arc(logoCX, logoCY, LOGO_R + 4 * S, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // White circle background for logo
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(logoCX, logoCY, LOGO_R, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Logo image — prefer base64 thumbnail (instant, no CORS) over Storage URL
+  const logoSrc = restaurant.logoBase64 || restaurant.logo;
+  if (logoSrc) {
+    try {
+      const logoImg = await loadImg(logoSrc);
+      ctx.save();
+      const clipR = LOGO_R - 2 * S;
+      ctx.beginPath();
+      ctx.arc(logoCX, logoCY, clipR, 0, Math.PI * 2);
+      ctx.clip();
+      // object-fit: cover + 1.25× zoom to fill past any internal image padding
+      const diam  = clipR * 2;
+      const scale = Math.max(diam / logoImg.width, diam / logoImg.height) * 1.25;
+      const drawW = logoImg.width  * scale;
+      const drawH = logoImg.height * scale;
+      ctx.drawImage(logoImg, logoCX - drawW / 2, logoCY - drawH / 2, drawW, drawH);
+      ctx.restore();
+    } catch {
+      // Initials fallback
+      ctx.fillStyle = '#f97316';
+      ctx.font = `900 ${28 * S}px sans-serif`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(restaurant.name.charAt(0).toUpperCase(), logoCX, logoCY);
+    }
+  }
+
+  // ── 5. Restaurant name ──
+  ctx.fillStyle    = '#ffffff';
+  ctx.font         = `900 ${22 * S}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(restaurant.name.toUpperCase(), CW / 2, 178 * S, CW - 60 * S);
+
+  // ── 6. Thin orange divider line ──
+  ctx.strokeStyle = '#f97316';
+  ctx.lineWidth   = 1.5 * S;
+  ctx.beginPath();
+  ctx.moveTo(CW / 2 - 60 * S, 198 * S);
+  ctx.lineTo(CW / 2 + 60 * S, 198 * S);
+  ctx.stroke();
+
+  // ── 7. QR code on white rounded card ──
+  const QR_X    = (CW - QR_SIZE) / 2;
+  const QR_Y    = 216 * S;
+  const padQR   = 16 * S;
+
+  // White QR background card
+  ctx.fillStyle = '#ffffff';
+  roundRect(ctx, QR_X - padQR, QR_Y - padQR, QR_SIZE + padQR * 2, QR_SIZE + padQR * 2, 20 * S);
+  ctx.fill();
+
+  // Subtle inner shadow on QR card
+  ctx.strokeStyle = 'rgba(249,115,22,0.3)';
+  ctx.lineWidth   = 2 * S;
+  roundRect(ctx, QR_X - padQR, QR_Y - padQR, QR_SIZE + padQR * 2, QR_SIZE + padQR * 2, 20 * S);
+  ctx.stroke();
+
+  // Draw QR
+  const qrImg = await loadImg(qrDataUrl);
+  ctx.drawImage(qrImg, QR_X, QR_Y, QR_SIZE, QR_SIZE);
+
+  // ── 8. Table badge ──
+  const badgeW  = 200 * S;
+  const badgeH  = 52 * S;
+  const badgeX  = (CW - badgeW) / 2;
+  const badgeY  = QR_Y + QR_SIZE + padQR * 2 + 20 * S;
+
+  const badgeGrad = ctx.createLinearGradient(badgeX, badgeY, badgeX + badgeW, badgeY);
+  badgeGrad.addColorStop(0, '#f97316');
+  badgeGrad.addColorStop(1, '#ea580c');
+  ctx.fillStyle = badgeGrad;
+  roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 26 * S);
+  ctx.fill();
+
+  ctx.fillStyle    = '#ffffff';
+  ctx.font         = `900 ${19 * S}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(tableLabel.toUpperCase(), CW / 2, badgeY + badgeH / 2);
+
+  // ── 9. Centered ordering message (2 lines) ──
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font         = `700 ${13 * S}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.fillStyle    = 'rgba(255,255,255,0.55)';
+  ctx.fillText('SKENIRAJTE QR KODO ZA NAROČILO', CW / 2, badgeY + badgeH + 20 * S);
+  ctx.fillStyle    = '#f97316';
+  ctx.font         = `900 ${14 * S}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.fillText('PIJAČ IN HRANE', CW / 2, badgeY + badgeH + 42 * S);
+
+  // ── 10. Outer card border glow ──
+  ctx.strokeStyle = 'rgba(249,115,22,0.25)';
+  ctx.lineWidth   = 2 * S;
+  roundRect(ctx, 1, 1, CW - 2, CH - 2, 36 * S);
+  ctx.stroke();
+
+  return canvas.toDataURL('image/png');
+}
+
 function QRGenerator({ restaurant }: { restaurant: Restaurant }) {
   const [tableCount, setTableCount] = useState(String(restaurant.tables ?? 6));
   const [qrUrls, setQrUrls] = useState<{ label: string; url: string; dataUrl: string }[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [genError, setGenError] = useState('');
   const baseUrl = `${window.location.origin}/order?r=${restaurant.id}`;
 
   async function generate() {
     setGenerating(true);
-    const count = parseInt(tableCount, 10);
+    setProgress(0);
+    setGenError('');
+    const count   = parseInt(tableCount, 10);
     const results: typeof qrUrls = [];
+    const total   = count + 1;
 
-    // Restaurant-level QR (no table)
-    results.push({
-      label: 'Restaurant QR (no table)',
-      url: baseUrl,
-      dataUrl: await QRCode.toDataURL(baseUrl, { width: 400, margin: 2, color: { dark: '#111827' } }),
-    });
-
-    // Per-table QRs
-    for (let i = 1; i <= count; i++) {
-      const url = `${baseUrl}&t=${i}`;
+    try {
+      // Restaurant-level QR (no table)
       results.push({
-        label: `Table ${i}`,
-        url,
-        dataUrl: await QRCode.toDataURL(url, { width: 400, margin: 2, color: { dark: '#111827' } }),
+        label: 'Restavracija QR',
+        url:   baseUrl,
+        dataUrl: await buildBrandedQR(baseUrl, 'Skeniraj & naroči', restaurant),
       });
+      setProgress(Math.round((1 / total) * 100));
+
+      // Per-table QRs
+      for (let i = 1; i <= count; i++) {
+        const url = `${baseUrl}&t=${i}`;
+        results.push({
+          label: `Miza ${i}`,
+          url,
+          dataUrl: await buildBrandedQR(url, `Miza ${i}`, restaurant),
+        });
+        setProgress(Math.round(((i + 1) / total) * 100));
+      }
+
+      setQrUrls(results);
+    } catch (err: any) {
+      console.error('QR generation failed:', err);
+      setGenError(err?.message || 'QR generation failed. Please try again.');
+    } finally {
+      setGenerating(false);
     }
-    setQrUrls(results);
-    setGenerating(false);
   }
 
   function download(item: typeof qrUrls[0]) {
     const a = document.createElement('a');
-    a.href = item.dataUrl;
+    a.href     = item.dataUrl;
     a.download = `qr-${item.label.replace(/\s+/g, '-').toLowerCase()}.png`;
     a.click();
   }
 
   function downloadAll() {
-    qrUrls.forEach((item) => download(item));
+    qrUrls.forEach((item, i) => setTimeout(() => download(item), i * 120));
   }
 
   return (
@@ -674,7 +947,7 @@ function QRGenerator({ restaurant }: { restaurant: Restaurant }) {
       <h2 className="text-xl font-bold text-gray-900 mb-5">QR Codes</h2>
       <div className="bg-white rounded-2xl p-5 shadow-sm mb-5">
         <p className="text-sm text-gray-500 mb-4">
-          Generate QR codes for your tables. Each QR code takes customers directly to the menu for that table.
+          Ustvarite premium QR kode za vaše mize. Vsaka koda vključuje vaš logotip in stranke popelje neposredno do menija.
         </p>
         <div className="flex gap-3 items-end">
           <div className="flex-1">
@@ -689,11 +962,22 @@ function QRGenerator({ restaurant }: { restaurant: Restaurant }) {
           <button
             onClick={generate}
             disabled={generating || !tableCount}
-            className="bg-orange-500 text-white font-semibold px-5 py-3 rounded-xl disabled:opacity-50"
+            className="bg-orange-500 text-white font-semibold px-5 py-3 rounded-xl disabled:opacity-50 min-w-[110px]"
           >
-            {generating ? 'Generating...' : 'Generate'}
+            {generating ? `${progress}%` : 'Generate'}
           </button>
         </div>
+        {generating && (
+          <div className="mt-3 h-1.5 bg-orange-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-orange-500 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        )}
+        {genError && (
+          <p className="mt-3 text-sm text-red-500 font-medium">{genError}</p>
+        )}
       </div>
 
       {qrUrls.length > 0 && (
@@ -704,14 +988,14 @@ function QRGenerator({ restaurant }: { restaurant: Restaurant }) {
               Download all
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             {qrUrls.map((item) => (
-              <div key={item.label} className="bg-white rounded-2xl p-4 shadow-sm text-center">
+              <div key={item.label} className="bg-white rounded-2xl p-3 shadow-sm text-center border border-gray-100">
                 <img src={item.dataUrl} alt={item.label} className="w-full rounded-xl mb-2" />
-                <p className="text-sm font-semibold text-gray-800 mb-2">{item.label}</p>
+                <p className="text-xs font-semibold text-gray-500 mb-2">{item.label}</p>
                 <button
                   onClick={() => download(item)}
-                  className="text-xs text-orange-500 font-semibold px-3 py-1.5 bg-orange-50 rounded-lg"
+                  className="text-xs text-orange-500 font-semibold px-3 py-1.5 bg-orange-50 rounded-lg w-full"
                 >
                   Download PNG
                 </button>
@@ -730,6 +1014,7 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
   const [form, setForm] = useState({
     name: restaurant.name,
     logo: restaurant.logo ?? '',
+    heroImage: restaurant.heroImage ?? '',
     tables: String(restaurant.tables ?? 1),
     kitchenPin: restaurant.kitchenPin ?? '',
     stripeSecretKey: restaurant.stripeSecretKey ?? '',
@@ -744,6 +1029,7 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
     await update(refs.restaurant(restaurant.id), {
       name: form.name.trim(),
       logo: form.logo.trim(),
+      heroImage: form.heroImage.trim() || null,
       tables: parseInt(form.tables, 10),
       kitchenPin: form.kitchenPin.trim(),
       stripeSecretKey: form.stripeSecretKey.trim() || null,
@@ -780,7 +1066,20 @@ function SettingsPanel({ restaurant }: { restaurant: Restaurant }) {
             <ImageUploader
               value={form.logo}
               onChange={(url) => setForm({ ...form, logo: url })}
+              onDataUrl={async (dataUrl) => {
+                // Save compressed base64 thumbnail to DB immediately — used by QR card canvas (no CORS needed)
+                try { await update(refs.restaurant(restaurant.id), { logoBase64: dataUrl }); } catch { /* non-fatal */ }
+              }}
               path={`logos/${restaurant.id}`}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Hero Background Image</label>
+            <p className="text-xs text-gray-400 mb-2">Displayed as the background behind your logo on the customer menu page.</p>
+            <ImageUploader
+              value={form.heroImage}
+              onChange={(url) => setForm({ ...form, heroImage: url })}
+              path={`heroes/${restaurant.id}`}
             />
           </div>
           {fields.map((f) => (
@@ -937,14 +1236,218 @@ function OrdersHistory({ restaurant }: { restaurant: Restaurant }) {
   );
 }
 
+// ─── Analytics Dashboard ──────────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, icon: Icon, color }: {
+  label: string; value: string; sub: string;
+  icon: React.ElementType;
+  color: 'orange' | 'blue' | 'green' | 'purple';
+}) {
+  const palette = {
+    orange: { bg: 'bg-orange-50', border: 'border-orange-100', icon: 'text-orange-400', val: 'text-orange-600' },
+    blue:   { bg: 'bg-blue-50',   border: 'border-blue-100',   icon: 'text-blue-400',   val: 'text-blue-600'   },
+    green:  { bg: 'bg-green-50',  border: 'border-green-100',  icon: 'text-green-400',  val: 'text-green-600'  },
+    purple: { bg: 'bg-purple-50', border: 'border-purple-100', icon: 'text-purple-400', val: 'text-purple-600' },
+  }[color];
+  return (
+    <div className={`rounded-2xl p-4 border ${palette.bg} ${palette.border}`}>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold text-gray-500">{label}</p>
+        <Icon size={16} className={palette.icon} />
+      </div>
+      <p className={`text-2xl font-black ${palette.val}`}>{value}</p>
+      <p className="text-xs text-gray-400 font-medium mt-0.5">{sub}</p>
+    </div>
+  );
+}
+
+function AnalyticsDashboard({ restaurant }: { restaurant: Restaurant }) {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onValue(refs.restaurantOrders(restaurant.id), (snap) => {
+      const data: Order[] = [];
+      snap.forEach((child) => { data.push({ id: child.key!, ...child.val() } as Order); });
+      setOrders(data.filter((o) => o.status !== 'cancelled'));
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [restaurant.id]);
+
+  // ── Time boundaries ────────────────────────────────────────────────────────
+  const todayStart  = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const weekStart   = new Date(todayStart); weekStart.setDate(weekStart.getDate() - 6);
+  const monthStart  = new Date(todayStart); monthStart.setDate(1);
+
+  const todayOrders = orders.filter((o) => o.timestamp >= todayStart.getTime());
+  const weekOrders  = orders.filter((o) => o.timestamp >= weekStart.getTime());
+  const monthOrders = orders.filter((o) => o.timestamp >= monthStart.getTime());
+
+  const rev = (arr: Order[]) => arr.reduce((s, o) => s + (o.totalPrice ?? 0), 0);
+  const revenueToday  = rev(todayOrders);
+  const revenueWeek   = rev(weekOrders);
+  const revenueMonth  = rev(monthOrders);
+  const avgOrderValue = orders.length ? rev(orders) / orders.length : 0;
+
+  // ── Last 7 days bar chart ──────────────────────────────────────────────────
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d    = new Date(todayStart); d.setDate(d.getDate() - (6 - i));
+    const next = new Date(d);          next.setDate(next.getDate() + 1);
+    const day  = orders.filter((o) => o.timestamp >= d.getTime() && o.timestamp < next.getTime());
+    return {
+      label:   d.toLocaleDateString('sl-SI', { weekday: 'short' }),
+      revenue: rev(day),
+      count:   day.length,
+    };
+  });
+  const maxRev = Math.max(...last7.map((d) => d.revenue), 1);
+
+  // ── Top selling items ──────────────────────────────────────────────────────
+  const itemMap: Record<string, { name: string; qty: number; revenue: number }> = {};
+  orders.forEach((o) => {
+    try {
+      (JSON.parse(o.items) as import('../types').CartItem[]).forEach((item) => {
+        if (!itemMap[item.name]) itemMap[item.name] = { name: item.name, qty: 0, revenue: 0 };
+        itemMap[item.name].qty     += item.quantity;
+        itemMap[item.name].revenue += item.price * item.quantity;
+      });
+    } catch { /* unparseable */ }
+  });
+  const topItems = Object.values(itemMap).sort((a, b) => b.qty - a.qty).slice(0, 5);
+
+  // ── Peak hour ─────────────────────────────────────────────────────────────
+  const hourCounts = Array<number>(24).fill(0);
+  orders.forEach((o) => { hourCounts[new Date(o.timestamp).getHours()]++; });
+  const peakHour = hourCounts.indexOf(Math.max(...hourCounts));
+
+  // ── Avg rating ─────────────────────────────────────────────────────────────
+  const rated    = orders.filter((o) => o.review?.rating);
+  const avgRating = rated.length ? rated.reduce((s, o) => s + (o.review!.rating), 0) / rated.length : 0;
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+
+  return (
+    <div>
+      <h2 className="text-xl font-bold text-gray-900 mb-5">Analytics</h2>
+
+      {/* ── Stat cards ── */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <StatCard label="Today's Revenue"  value={`€${revenueToday.toFixed(2)}`}  sub={`${todayOrders.length} orders today`}         icon={TrendingUp}  color="orange" />
+        <StatCard label="This Week"        value={`€${revenueWeek.toFixed(2)}`}   sub={`${weekOrders.length} orders (7 days)`}        icon={BarChart2}   color="blue"   />
+        <StatCard label="This Month"       value={`€${revenueMonth.toFixed(2)}`}  sub={`${monthOrders.length} orders this month`}     icon={ShoppingBag} color="green"  />
+        <StatCard
+          label="Avg Order Value"
+          value={`€${avgOrderValue.toFixed(2)}`}
+          sub={avgRating > 0 ? `★ ${avgRating.toFixed(1)} avg rating (${rated.length})` : `${orders.length} total orders`}
+          icon={Star}
+          color="purple"
+        />
+      </div>
+
+      {/* ── 7-day revenue bar chart ── */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
+        <h3 className="font-bold text-gray-800 mb-1">Revenue — Last 7 Days</h3>
+        <p className="text-xs text-gray-400 mb-4">€{revenueWeek.toFixed(2)} this week</p>
+        <div className="flex items-end gap-2 h-28">
+          {last7.map((d, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+              {d.revenue > 0 && (
+                <span className="text-[9px] font-bold text-gray-500">€{d.revenue >= 100 ? `${(d.revenue / 100).toFixed(0)}` : d.revenue.toFixed(0)}</span>
+              )}
+              <div className="w-full flex-1 flex items-end">
+                <div
+                  className="w-full bg-orange-500 rounded-t-lg transition-all"
+                  style={{ height: `${Math.max((d.revenue / maxRev) * 80, d.revenue > 0 ? 6 : 2)}px`, opacity: d.revenue > 0 ? 1 : 0.15 }}
+                />
+              </div>
+              <span className="text-[10px] text-gray-400 font-medium">{d.label}</span>
+              {d.count > 0 && <span className="text-[9px] text-gray-300">{d.count}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Top selling items ── */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm mb-4">
+        <h3 className="font-bold text-gray-800 mb-4">Top Selling Items</h3>
+        {topItems.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-4">No order data yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {topItems.map((item, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="w-6 h-6 rounded-full bg-orange-100 text-orange-600 text-xs font-black flex items-center justify-center flex-shrink-0">
+                  {i + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-center mb-1">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{item.name}</p>
+                    <span className="text-sm font-bold text-gray-700 ml-2 flex-shrink-0">€{item.revenue.toFixed(2)}</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-orange-400 rounded-full transition-all"
+                      style={{ width: `${(item.qty / topItems[0].qty) * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-gray-400 w-8 text-right flex-shrink-0">{item.qty}×</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Peak hour + rating row ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock size={14} className="text-orange-400" />
+            <h3 className="font-bold text-gray-800 text-sm">Busiest Hour</h3>
+          </div>
+          {orders.length > 0 ? (
+            <>
+              <p className="text-2xl font-black text-orange-500">{String(peakHour).padStart(2,'0')}:00</p>
+              <p className="text-xs text-gray-400 mt-1">{hourCounts[peakHour]} orders at this hour</p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-400">No data yet</p>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <Star size={14} className="text-orange-400" />
+            <h3 className="font-bold text-gray-800 text-sm">Customer Rating</h3>
+          </div>
+          {avgRating > 0 ? (
+            <>
+              <p className="text-2xl font-black text-orange-500">★ {avgRating.toFixed(1)}</p>
+              <p className="text-xs text-gray-400 mt-1">from {rated.length} review{rated.length !== 1 ? 's' : ''}</p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-400">No reviews yet</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Admin Shell ──────────────────────────────────────────────────────────────
 
 const NAV = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '' },
-  { icon: UtensilsCrossed, label: 'Menu', path: 'menu' },
-  { icon: Package, label: 'Orders', path: 'orders' },
-  { icon: QrCode, label: 'QR Codes', path: 'qr' },
-  { icon: Settings, label: 'Settings', path: 'settings' },
+  { icon: UtensilsCrossed, label: 'Menu',      path: 'menu' },
+  { icon: Package,         label: 'Orders',    path: 'orders' },
+  { icon: BarChart2,       label: 'Analytics', path: 'analytics' },
+  { icon: QrCode,          label: 'QR Codes',  path: 'qr' },
+  { icon: Settings,        label: 'Settings',  path: 'settings' },
 ];
 
 function AdminShell() {
@@ -953,11 +1456,12 @@ function AdminShell() {
 
   // Map the sub-route under /admin to a human-readable section label.
   const SECTION_TITLES: Record<string, string> = {
-    '/admin': 'Dashboard',
-    '/admin/menu': 'Menu',
-    '/admin/orders': 'Orders',
-    '/admin/qr': 'QR Codes',
-    '/admin/settings': 'Settings',
+    '/admin':           'Dashboard',
+    '/admin/menu':      'Menu',
+    '/admin/orders':    'Orders',
+    '/admin/analytics': 'Analytics',
+    '/admin/qr':        'QR Codes',
+    '/admin/settings':  'Settings',
   };
   const section = SECTION_TITLES[location.pathname] ?? 'Admin';
   useDocumentTitle(restaurant ? `${section} · ${restaurant.name}` : section);
@@ -1011,8 +1515,9 @@ function AdminShell() {
         <Routes>
           <Route index element={<Dashboard restaurant={restaurant} />} />
           <Route path="menu" element={<MenuManager restaurant={restaurant} />} />
-          <Route path="orders" element={<OrdersHistory restaurant={restaurant} />} />
-          <Route path="qr" element={<QRGenerator restaurant={restaurant} />} />
+          <Route path="orders"    element={<OrdersHistory      restaurant={restaurant} />} />
+          <Route path="analytics" element={<AnalyticsDashboard restaurant={restaurant} />} />
+          <Route path="qr"        element={<QRGenerator        restaurant={restaurant} />} />
           <Route path="settings" element={<SettingsPanel restaurant={restaurant} />} />
         </Routes>
       </div>

@@ -8,12 +8,15 @@ interface CartStore {
   addItem: (item: CartItem) => void;
   removeItem: (id: string) => void;
   changeQty: (id: string, delta: number) => void;
+  updateItemNote: (id: string, note: string) => void;
   clearCart: () => void;
   setContext: (restaurantId: string, tableNumber: number | null) => void;
   total: () => number;
   totalFormatted: () => string;
   itemCount: () => number;
   itemsReadable: () => string;
+  /** Total quantity of all variants of a base item id */
+  getItemQty: (baseId: string) => number;
 }
 
 export const useCartStore = create<CartStore>((set, get) => ({
@@ -27,11 +30,11 @@ export const useCartStore = create<CartStore>((set, get) => ({
       if (existing) {
         return {
           items: state.items.map((i) =>
-            i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i,
+            i.id === item.id ? { ...i, quantity: i.quantity + (item.quantity ?? 1) } : i,
           ),
         };
       }
-      return { items: [...state.items, item] };
+      return { items: [...state.items, { ...item, quantity: item.quantity ?? 1 }] };
     }),
 
   removeItem: (id) =>
@@ -45,6 +48,11 @@ export const useCartStore = create<CartStore>((set, get) => ({
       return { items: updated };
     }),
 
+  updateItemNote: (id, note) =>
+    set((state) => ({
+      items: state.items.map((i) => i.id === id ? { ...i, note: note || undefined } : i),
+    })),
+
   clearCart: () => set({ items: [] }),
 
   setContext: (restaurantId, tableNumber) => set({ restaurantId, tableNumber }),
@@ -57,6 +65,16 @@ export const useCartStore = create<CartStore>((set, get) => ({
 
   itemsReadable: () =>
     get()
-      .items.map((i) => `${i.quantity}x ${i.name}`)
+      .items.map((i) => {
+        let s = `${i.quantity}× ${i.name}`;
+        if (i.modifiers) s += ` (${i.modifiers})`;
+        if (i.note) s += ` [${i.note}]`;
+        return s;
+      })
       .join(', '),
+
+  getItemQty: (baseId) =>
+    get()
+      .items.filter((i) => i.id === baseId || i.id.startsWith(`${baseId}__`))
+      .reduce((sum, i) => sum + i.quantity, 0),
 }));

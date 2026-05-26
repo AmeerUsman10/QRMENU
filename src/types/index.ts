@@ -25,6 +25,7 @@ export interface MenuItem {
   description?: string;
   category: string;
   popular?: boolean;
+  tags?: string[];   // dietary flags: 'vegetarian'|'vegan'|'spicy'|'gluten-free'|'dairy-free'|'halal'
   modifierGroups?: Record<string, Omit<ModifierGroup, 'id'>>;
 }
 
@@ -32,6 +33,8 @@ export interface Restaurant {
   id: string;
   name: string;
   logo: string;
+  logoBase64?: string;   // compressed thumbnail data URL, used for canvas/QR cards
+  heroImage?: string;
   active: boolean;
   tables: number;
   kitchenPin: string;
@@ -50,6 +53,7 @@ export interface CartItem {
   quantity: number;
   image: string;
   modifiers?: string;
+  note?: string;     // per-item kitchen note
 }
 
 export interface OrderReview {

@@ -11,7 +11,7 @@ import type { Restaurant, MenuItem, CartItem } from '../types';
 
 // ─── Language ─────────────────────────────────────────────────────────────────
 
-type Lang = 'sl' | 'en';
+type Lang = 'sl' | 'en' | 'de';
 const LANG_KEY = 'menu.lang';
 
 const T = {
@@ -103,6 +103,50 @@ const T = {
     noResultsSub: 'Try a different search term',
     searchResultsFor: (n: number, q: string) => `${n} result${n !== 1 ? 's' : ''} for "${q}"`,
   },
+  de: {
+    loading: 'Menü wird geladen',
+    noRestaurant: 'Kein Restaurant angegeben. Scannen Sie einen gültigen QR-Code.',
+    restaurantNotFound: 'Restaurant nicht gefunden.',
+    whichTable: 'An welchem Tisch sitzen Sie?',
+    tablePlaceholder: 'Tischnummer',
+    continueBtn: 'Weiter',
+    table: 'Tisch',
+    popular: 'Beliebt',
+    unavailable: 'Nicht verfügbar',
+    other: 'Sonstiges',
+    viewOrder: 'Bestellung ansehen',
+    yourOrder: 'Ihre Bestellung',
+    checkout: 'Zur Kasse',
+    total: 'Gesamt',
+    name: 'Ihr Name',
+    namePlaceholder: 'z.B. Max',
+    nameRequired: 'Bitte geben Sie Ihren Namen ein',
+    phone: 'Telefon (optional)',
+    phonePlaceholder: '+49 ...',
+    note: 'Notiz für die Küche (optional)',
+    notePlaceholder: 'Allergien, besondere Wünsche…',
+    payment: 'Zahlung',
+    cash: '💵 Bargeld',
+    card: '💳 Karte',
+    cardHint: 'Apple Pay & Google Pay akzeptiert',
+    cardComingSoon: 'Kartenzahlung noch nicht aktiviert. Bald verfügbar.',
+    orderSummary: 'Bestellübersicht',
+    back: 'Zurück',
+    placeOrder: 'Bestellung aufgeben',
+    placingOrder: 'Bestellung wird aufgegeben…',
+    orderPlaced: 'Bestellung aufgegeben!',
+    yourOrderNumber: 'Ihre Bestellnummer ist',
+    bringToTable: 'Wir bringen es an Ihren Tisch, sobald es fertig ist.',
+    orderMore: 'Mehr bestellen',
+    required: 'Erforderlich',
+    addToOrder: 'Zur Bestellung hinzufügen',
+    pleaseSelect: 'Bitte wählen',
+    orderError: 'Bestellung konnte nicht aufgegeben werden. Bitte erneut versuchen.',
+    searchPlaceholder: 'Gerichte suchen…',
+    noResults: 'Keine Ergebnisse',
+    noResultsSub: 'Versuchen Sie einen anderen Suchbegriff',
+    searchResultsFor: (n: number, q: string) => `${n} Ergebnis${n !== 1 ? 'se' : ''} für "${q}"`,
+  },
 };
 
 function getLang(): Lang {
@@ -118,28 +162,12 @@ function formatPrice(n: number) {
 
 // ─── Language Switcher Pill ───────────────────────────────────────────────────
 
-function LangPill({ lang, onChange }: { lang: Lang; onChange: (l: Lang) => void }) {
-  return (
-    <div className="flex items-center bg-gray-100 rounded-xl p-0.5 border border-gray-200 flex-shrink-0">
-      <button
-        onClick={() => onChange('sl')}
-        className={`px-2.5 py-1.5 rounded-[10px] text-xs font-black transition-all ${
-          lang === 'sl' ? 'bg-white text-orange-500 shadow-sm' : 'text-gray-400'
-        }`}
-      >
-        SLO
-      </button>
-      <button
-        onClick={() => onChange('en')}
-        className={`px-2.5 py-1.5 rounded-[10px] text-xs font-black transition-all ${
-          lang === 'en' ? 'bg-white text-orange-500 shadow-sm' : 'text-gray-400'
-        }`}
-      >
-        ENG
-      </button>
-    </div>
-  );
-}
+const LANGS: { code: Lang; flag: string }[] = [
+  { code: 'sl', flag: '🇸🇮' },
+  { code: 'en', flag: '🇬🇧' },
+  { code: 'de', flag: '🇩🇪' },
+];
+
 
 // ─── Highlight matching text ──────────────────────────────────────────────────
 
@@ -743,7 +771,13 @@ export default function OrderPage() {
 
           {/* Lang switcher */}
           <div className="mt-6">
-            <LangPill lang={lang} onChange={switchLang} />
+            <button
+              onClick={cycleLang}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-xl transition-colors text-sm font-bold text-gray-500"
+            >
+              <span className="text-base">{LANGS.find((l) => l.code === lang)?.flag}</span>
+              {lang === 'sl' ? 'Slovenščina' : lang === 'en' ? 'English' : 'Deutsch'}
+            </button>
           </div>
         </div>
       </div>
@@ -770,32 +804,59 @@ export default function OrderPage() {
     categoryRefs.current[cat]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function cycleLang() {
+    const order: Lang[] = ['sl', 'en', 'de'];
+    const next = order[(order.indexOf(lang) + 1) % order.length];
+    switchLang(next);
+  }
+
   return (
     <>
-    {/* ── Language switcher — outside the scrollable div so CSS transforms
-        on animated children never break its fixed positioning on iOS ── */}
-    <div className="fixed top-3 right-4 z-50">
-      <LangPill lang={lang} onChange={switchLang} />
-    </div>
-
     <div className="min-h-screen bg-gray-50 pb-28">
 
       {/* ── Hero ── */}
-      <div className="bg-white border-b border-gray-100 px-4 pt-10 pb-8 text-center shadow-sm">
-        {restaurant.logo && (
-          <div className="w-20 h-20 rounded-2xl overflow-hidden bg-gray-100 shadow-md mx-auto mb-4">
-            <img src={restaurant.logo} alt={restaurant.name} className="w-full h-full object-cover" />
-          </div>
+      <div
+        className={`relative flex flex-col items-center justify-center px-4 py-10 text-center overflow-hidden border-b border-gray-100 shadow-sm ${
+          restaurant.heroImage ? 'min-h-[220px]' : 'bg-white'
+        }`}
+        style={
+          restaurant.heroImage
+            ? { backgroundImage: `url(${restaurant.heroImage})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+            : {}
+        }
+      >
+        {/* Gradient overlay — only when hero image present */}
+        {restaurant.heroImage && (
+          <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/45 to-black/60" />
         )}
-        <h1 className="text-2xl font-black text-gray-900 leading-tight">{restaurant.name}</h1>
-        {tableNumber != null && (
-          <div className="inline-flex flex-col items-center mt-4 bg-orange-50 border-2 border-orange-200 rounded-2xl px-8 py-3">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400 leading-none mb-1">
-              {t.table}
-            </span>
-            <span className="text-4xl font-black text-orange-500 leading-none">{tableNumber}</span>
-          </div>
-        )}
+
+        <div className="relative z-10">
+          {restaurant.logo && (
+            <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-md mx-auto mb-4"
+              style={{ background: restaurant.heroImage ? 'rgba(255,255,255,0.15)' : '#f3f4f6' }}>
+              <img src={restaurant.logo} alt={restaurant.name} className="w-full h-full object-cover" />
+            </div>
+          )}
+          <h1 className={`text-2xl font-black leading-tight ${restaurant.heroImage ? 'text-white drop-shadow' : 'text-gray-900'}`}>
+            {restaurant.name}
+          </h1>
+          {tableNumber != null && (
+            <div className={`inline-flex flex-col items-center mt-4 rounded-2xl px-8 py-3 ${
+              restaurant.heroImage
+                ? 'bg-white/20 backdrop-blur-sm border border-white/30'
+                : 'bg-orange-50 border-2 border-orange-200'
+            }`}>
+              <span className={`text-[10px] font-black uppercase tracking-[0.2em] leading-none mb-1 ${
+                restaurant.heroImage ? 'text-white/80' : 'text-orange-400'
+              }`}>
+                {t.table}
+              </span>
+              <span className={`text-4xl font-black leading-none ${restaurant.heroImage ? 'text-white' : 'text-orange-500'}`}>
+                {tableNumber}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Sticky bar: categories ↔ search ── */}
@@ -859,6 +920,14 @@ export default function OrderPage() {
                   </button>
                 ))}
               </div>
+              {/* Language cycle */}
+              <button
+                onClick={cycleLang}
+                className="flex-shrink-0 w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors text-base"
+                aria-label="Switch language"
+              >
+                {LANGS.find((l) => l.code === lang)?.flag}
+              </button>
               {/* Search trigger */}
               <button
                 onClick={openSearch}
@@ -913,17 +982,17 @@ export default function OrderPage() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: idx * 0.03, duration: 0.2 }}
                       onClick={() => handleItemTap(item)}
-                      className="w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
+                      className="w-full h-[88px] bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
                     >
                       {item.image && (
-                        <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
+                        <div className="w-24 h-full flex-shrink-0">
                           <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                         </div>
                       )}
-                      <div className="flex-1 min-w-0 p-3 flex flex-col justify-between">
+                      <div className="flex-1 min-w-0 px-3 py-2 flex flex-col justify-between overflow-hidden">
                         <div>
-                          <div className="flex items-start gap-2 justify-between mb-1">
-                            <p className="font-black text-gray-900 text-sm leading-snug flex-1">
+                          <div className="flex items-start gap-2 justify-between">
+                            <p className="font-black text-gray-900 text-sm leading-snug flex-1 truncate">
                               <Highlight text={item.name} query={q} />
                             </p>
                             {/* Category badge */}
@@ -932,15 +1001,15 @@ export default function OrderPage() {
                             </span>
                           </div>
                           {item.description && (
-                            <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">
+                            <p className="text-xs text-gray-400 line-clamp-1 leading-normal mt-0.5">
                               <Highlight text={item.description} query={q} />
                             </p>
                           )}
                         </div>
-                        <div className="flex items-center justify-between mt-2">
+                        <div className="flex items-center justify-between">
                           <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
-                          <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center shadow-sm flex-shrink-0">
-                            <Plus size={17} className="text-white" />
+                          <div className="w-7 h-7 rounded-full bg-orange-500 flex items-center justify-center shadow-sm flex-shrink-0">
+                            <Plus size={15} className="text-white" />
                           </div>
                         </div>
                       </div>
@@ -974,19 +1043,19 @@ export default function OrderPage() {
                         transition={{ delay: idx * 0.04, duration: 0.25 }}
                         onClick={() => handleItemTap(item)}
                         disabled={!item.available}
-                        className={`w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] ${
+                        className={`w-full h-[88px] bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] ${
                           !item.available ? 'opacity-50' : 'hover:shadow-md'
                         }`}
                       >
                         {item.image && (
-                          <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
+                          <div className="w-24 h-full flex-shrink-0">
                             <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                           </div>
                         )}
-                        <div className="flex-1 min-w-0 p-3 flex flex-col justify-between">
+                        <div className="flex-1 min-w-0 px-3 py-2 flex flex-col justify-between overflow-hidden">
                           <div>
                             <div className="flex items-start gap-2 justify-between">
-                              <p className="font-black text-gray-900 text-sm leading-snug flex-1">{item.name}</p>
+                              <p className="font-black text-gray-900 text-sm leading-snug flex-1 truncate">{item.name}</p>
                               {item.popular && (
                                 <span className="flex-shrink-0 text-[10px] bg-orange-100 text-orange-500 px-2 py-0.5 rounded-full font-black">
                                   {t.popular}
@@ -994,18 +1063,18 @@ export default function OrderPage() {
                               )}
                             </div>
                             {item.description && (
-                              <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
+                              <p className="text-xs text-gray-400 mt-0.5 line-clamp-1 leading-normal">
                                 {item.description}
                               </p>
                             )}
                           </div>
-                          <div className="flex items-center justify-between mt-2">
+                          <div className="flex items-center justify-between">
                             <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
                             {!item.available ? (
                               <span className="text-xs text-gray-400 font-medium">{t.unavailable}</span>
                             ) : (
-                              <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center shadow-sm flex-shrink-0">
-                                <Plus size={17} className="text-white" />
+                              <div className="w-7 h-7 rounded-full bg-orange-500 flex items-center justify-center shadow-sm flex-shrink-0">
+                                <Plus size={15} className="text-white" />
                               </div>
                             )}
                           </div>
@@ -1029,15 +1098,15 @@ export default function OrderPage() {
                       <button
                         key={item.id}
                         onClick={() => handleItemTap(item)}
-                        className="w-full bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
+                        className="w-full h-[88px] bg-white rounded-2xl overflow-hidden flex text-left border border-gray-100 shadow-sm transition-all active:scale-[0.98] hover:shadow-md"
                       >
                         {item.image && (
-                          <div className="w-28 h-28 flex-shrink-0 overflow-hidden">
+                          <div className="w-24 h-full flex-shrink-0">
                             <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                           </div>
                         )}
-                        <div className="flex-1 p-3 flex flex-col justify-between">
-                          <p className="font-black text-gray-900 text-sm">{item.name}</p>
+                        <div className="flex-1 px-3 py-2 flex flex-col justify-between overflow-hidden">
+                          <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
                           <span className="font-black text-gray-900">{formatPrice(item.price)}</span>
                         </div>
                       </button>

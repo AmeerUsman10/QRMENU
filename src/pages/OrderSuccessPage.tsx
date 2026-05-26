@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChefHat, Clock, BellRing, XCircle, Sparkles } from 'lucide-react';
-import { refs, updateOrderStatus, submitOrderReview, onValue } from '../lib/firebase';
+import { refs, updateOrderStatus, submitOrderReview, onValue, get } from '../lib/firebase';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { OrderSuccessSkeleton } from '../components/Skeleton';
 import type { Order, CartItem } from '../types';
@@ -53,6 +53,10 @@ const T = {
     reviewThankYou: 'Hvala za vaše mnenje! 🙏',
     reviewThankYouSub: 'Vaše mnenje smo prejeli.',
     reviewError: 'Napaka pri pošiljanju. Poskusite znova.',
+    orderedAgo: (n: number) => `Naročeno pred ${n} min`,
+    estimateNew: 'Pričakovan čas: ~15 min',
+    estimatePreparing: 'Skoraj pripravljeno, še nekaj minut…',
+    notifyReady: 'Vaše naročilo je pripravljeno! 🔔',
   },
   en: {
     titleNotFound: 'Order not found',
@@ -87,11 +91,35 @@ const T = {
     reviewThankYou: 'Thank you for your feedback! 🙏',
     reviewThankYouSub: 'We really appreciate it.',
     reviewError: 'Failed to submit. Please try again.',
+    orderedAgo: (n: number) => `Ordered ${n} min ago`,
+    estimateNew: 'Estimated wait: ~15 min',
+    estimatePreparing: 'Almost ready, a few more minutes…',
+    notifyReady: 'Your order is ready! 🔔',
   },
 };
 
 function getLang(): Lang {
   return (localStorage.getItem('menu.lang') as Lang) ?? 'sl';
+}
+
+// ─── Ready chime ──────────────────────────────────────────────────────────────
+
+function playChime(ctx: AudioContext) {
+  // Three rising tones: C5 → E5 → G5
+  [523.25, 659.25, 783.99].forEach((freq, i) => {
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const t = ctx.currentTime + i * 0.22;
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.35, t + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    osc.start(t);
+    osc.stop(t + 0.7);
+  });
 }
 
 // ─── Star Picker ──────────────────────────────────────────────────────────────
@@ -265,6 +293,10 @@ export default function OrderSuccessPage() {
   const [existingReview, setExistingReview] = useState<{ rating: number; comment: string } | null>(null);
   const [showReview, setShowReview] = useState(false);
   const reviewRef = useRef<HTMLDivElement>(null);
+  const [restaurantLogo, setRestaurantLogo] = useState('');
+  const prevStatusRef = useRef<string | null>(null);
+  const [minutesAgo, setMinutesAgo] = useState(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   // Auto-scroll to review card only when it's a fresh prompt (no review yet).
   // If the order already has a review (page refresh / returning customer),
@@ -277,6 +309,63 @@ export default function OrderSuccessPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [showReview]);
+
+  // Unlock AudioContext on first user interaction (required by browser autoplay policy)
+  useEffect(() => {
+    function unlock() {
+      try {
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AC) return;
+        if (!audioCtxRef.current) audioCtxRef.current = new AC();
+        if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('touchstart', unlock, { once: true, passive: true });
+    window.addEventListener('click',      unlock, { once: true });
+    return () => {
+      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('click',      unlock);
+    };
+  }, []);
+
+  // Fetch restaurant logo once we know the restaurantId
+  useEffect(() => {
+    if (!order?.restaurantId) return;
+    get(refs.restaurant(order.restaurantId)).then((snap) => {
+      if (snap.exists()) setRestaurantLogo(snap.val().logo || '');
+    }).catch(() => {});
+  }, [order?.restaurantId]);
+
+  // Play chime + vibrate when status changes TO 'ready'
+  useEffect(() => {
+    if (!order) return;
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = order.status;
+    if (prev === null) return; // initial load — don't fire
+    if (order.status === 'ready' && prev !== 'ready') {
+      // Resume the already-unlocked context and play
+      const ctx = audioCtxRef.current;
+      if (ctx) {
+        ctx.resume().then(() => playChime(ctx)).catch(() => {});
+      } else {
+        // Fallback: create fresh context (works if user has already interacted)
+        try {
+          const AC = window.AudioContext || (window as any).webkitAudioContext;
+          if (AC) { const c = new AC(); audioCtxRef.current = c; playChime(c); }
+        } catch { /* ignore */ }
+      }
+      try { navigator.vibrate?.([180, 80, 180, 80, 380]); } catch { /* ignore */ }
+    }
+  }, [order?.status]);
+
+  // Keep "ordered X min ago" counter ticking
+  useEffect(() => {
+    if (!order?.timestamp) return;
+    const tick = () => setMinutesAgo(Math.floor((Date.now() - order.timestamp) / 60000));
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => clearInterval(id);
+  }, [order?.timestamp]);
 
   useDocumentTitle(
     error
@@ -366,6 +455,22 @@ export default function OrderSuccessPage() {
     <div className="min-h-screen bg-gray-50 py-10 px-4 flex flex-col items-center justify-center">
       <div className="w-full max-w-md space-y-4">
 
+        {/* ── Restaurant branding header ── */}
+        <div className="flex flex-col items-center gap-2 pb-2">
+          {restaurantLogo ? (
+            <img
+              src={restaurantLogo}
+              alt={order.restaurantName}
+              className="w-14 h-14 rounded-2xl object-cover shadow-md border border-white"
+            />
+          ) : (
+            <div className="w-14 h-14 rounded-2xl bg-orange-500 flex items-center justify-center shadow-md">
+              <span className="text-white font-black text-2xl">{order.restaurantName.charAt(0)}</span>
+            </div>
+          )}
+          <p className="font-black text-gray-800 text-base tracking-tight">{order.restaurantName}</p>
+        </div>
+
         {/* ── Main order card ── */}
         <div className="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
 
@@ -376,6 +481,16 @@ export default function OrderSuccessPage() {
             </div>
             <h2 className="text-2xl font-black tracking-tight mb-2 text-gray-900">{statusConfig.title}</h2>
             <p className="text-gray-500 text-sm max-w-xs">{statusConfig.subtitle}</p>
+            {order.status === 'new' && (
+              <p className="mt-2 text-xs font-semibold text-orange-500 bg-orange-50 border border-orange-100 rounded-full px-3 py-1">
+                {t.estimateNew}
+              </p>
+            )}
+            {order.status === 'preparing' && (
+              <p className="mt-2 text-xs font-semibold text-blue-500 bg-blue-50 border border-blue-100 rounded-full px-3 py-1">
+                {t.estimatePreparing}
+              </p>
+            )}
           </div>
 
           <div className="p-6 space-y-6">
@@ -392,6 +507,9 @@ export default function OrderSuccessPage() {
                 <span className="mt-2 inline-block bg-orange-100 text-orange-700 text-xs font-bold px-3 py-1 rounded-full">
                   {t.table} {order.tableNumber}
                 </span>
+              )}
+              {minutesAgo > 0 && (
+                <p className="mt-2 text-xs text-gray-400 font-medium">{t.orderedAgo(minutesAgo)}</p>
               )}
             </div>
 
