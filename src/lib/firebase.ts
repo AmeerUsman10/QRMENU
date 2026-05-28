@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, push, set, get, update, onValue, runTransaction, query, orderByChild, equalTo } from 'firebase/database';
+import { getDatabase, ref, push, set, get, update, remove, onValue, runTransaction, query, orderByChild, equalTo } from 'firebase/database';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
@@ -32,6 +32,8 @@ export const refs = {
   orderField: (id: string, field: string) => ref(db, `orders/${id}/${field}`),
   restaurantOrders: (restaurantId: string) => query(ref(db, 'orders'), orderByChild('restaurantId'), equalTo(restaurantId)),
   restaurantCounter: (restaurantId: string) => ref(db, `restaurant_counters/${restaurantId}`),
+  inventoryItems: (restaurantId: string) => ref(db, `inventory/${restaurantId}/items`),
+  inventoryItem: (restaurantId: string, itemId: string) => ref(db, `inventory/${restaurantId}/items/${itemId}`),
 };
 
 export async function placeOrder(
@@ -71,4 +73,4 @@ export async function getRestaurant(id: string): Promise<Restaurant | null> {
   return { id, ...snap.val() } as Restaurant;
 }
 
-export { onValue, get, set, update, push, ref, runTransaction };
+export { onValue, get, set, update, push, remove, ref, runTransaction };

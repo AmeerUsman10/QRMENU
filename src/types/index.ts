@@ -62,6 +62,18 @@ export interface OrderReview {
   timestamp: number;
 }
 
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: string;
+  unit: string;
+  currentStock: number;
+  minStock: number;
+  unitPrice?: number;
+  supplier?: string;
+  lastUpdated: number;
+}
+
 export interface Order {
   id: string;
   restaurantId: string;

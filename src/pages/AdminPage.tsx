@@ -4,17 +4,19 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, UtensilsCrossed, QrCode, Settings, LogOut,
   Plus, Pencil, Trash2, X, Eye, EyeOff, Save, Package, Upload, ImageIcon,
-  BarChart2, TrendingUp, ShoppingBag, Star, Clock
+  BarChart2, TrendingUp, ShoppingBag, Star, Clock,
+  Boxes, AlertTriangle, CheckCircle2, SlidersHorizontal, ChevronDown,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword
 } from 'firebase/auth';
-import { onValue, set, get, update, push, query, orderByChild, equalTo } from 'firebase/database';
+import { onValue, set, get, update, push, remove, query, orderByChild, equalTo } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL, getBytes } from 'firebase/storage';
-import { auth, refs, storage } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, refs, storage, firebaseFunctions } from '../lib/firebase';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
-import type { Restaurant, MenuItem, Order } from '../types';
+import type { Restaurant, MenuItem, Order, InventoryItem } from '../types';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
 
@@ -1439,14 +1441,859 @@ function AnalyticsDashboard({ restaurant }: { restaurant: Restaurant }) {
   );
 }
 
+// ─── Inventory Manager ───────────────────────────────────────────────────────
+
+const INV_UNITS = ['kg', 'g', 'L', 'mL', 'pcs', 'bottles', 'boxes', 'bags', 'cans', 'portions'];
+const INV_CATEGORIES = ['Produce', 'Dairy', 'Meat & Poultry', 'Seafood', 'Dry Goods', 'Beverages', 'Condiments & Sauces', 'Bakery', 'Frozen', 'Cleaning & Hygiene', 'Other'];
+const ADJUST_REASONS = ['Delivery received', 'Used in production', 'Waste / spoilage', 'Inventory correction', 'Other'];
+
+type StockStatus = 'ok' | 'low' | 'out';
+function getStockStatus(item: InventoryItem): StockStatus {
+  if (item.currentStock <= 0) return 'out';
+  if (item.currentStock <= item.minStock) return 'low';
+  return 'ok';
+}
+
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return mins <= 1 ? 'just now' : `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
+// ── Item Add/Edit Modal ───────────────────────────────────────────────────────
+
+interface ItemModalProps {
+  restaurantId: string;
+  item?: InventoryItem;
+  onClose: () => void;
+}
+
+function ItemModal({ restaurantId, item, onClose }: ItemModalProps) {
+  const isEdit = !!item;
+  const [form, setForm] = useState({
+    name:         item?.name         ?? '',
+    category:     item?.category     ?? INV_CATEGORIES[0],
+    unit:         item?.unit         ?? INV_UNITS[0],
+    currentStock: item?.currentStock != null ? String(item.currentStock) : '',
+    minStock:     item?.minStock     != null ? String(item.minStock)     : '',
+    unitPrice:    item?.unitPrice    != null ? String(item.unitPrice)    : '',
+    supplier:     item?.supplier     ?? '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState('');
+
+  const f = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm(prev => ({ ...prev, [k]: e.target.value }));
+
+  async function handleSave() {
+    if (!form.name.trim()) { setError('Item name is required'); return; }
+    if (form.currentStock === '' || isNaN(Number(form.currentStock))) { setError('Current stock must be a number'); return; }
+    if (form.minStock === '' || isNaN(Number(form.minStock))) { setError('Minimum stock must be a number'); return; }
+    setSaving(true);
+    const payload: Omit<InventoryItem, 'id'> = {
+      name:         form.name.trim(),
+      category:     form.category,
+      unit:         form.unit,
+      currentStock: parseFloat(form.currentStock),
+      minStock:     parseFloat(form.minStock),
+      lastUpdated:  Date.now(),
+      ...(form.unitPrice  ? { unitPrice:  parseFloat(form.unitPrice)  } : {}),
+      ...(form.supplier.trim() ? { supplier: form.supplier.trim() } : {}),
+    };
+    try {
+      if (isEdit && item) {
+        await update(refs.inventoryItem(restaurantId, item.id), payload);
+      } else {
+        await push(refs.inventoryItems(restaurantId), payload);
+      }
+      onClose();
+    } catch {
+      setError('Failed to save. Please try again.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div className="bg-white rounded-t-3xl max-h-[92vh] flex flex-col"
+        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 30, stiffness: 280 }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-100">
+          <h2 className="text-lg font-black text-gray-900">{isEdit ? 'Edit Item' : 'Add Inventory Item'}</h2>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {/* Name */}
+          <div>
+            <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Item Name *</label>
+            <input value={form.name} onChange={f('name')} placeholder="e.g. Tomatoes"
+              className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 transition-colors" />
+          </div>
+          {/* Category + Unit */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Category *</label>
+              <div className="relative">
+                <select value={form.category} onChange={f('category')}
+                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 appearance-none bg-white">
+                  {INV_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                </select>
+                <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Unit *</label>
+              <div className="relative">
+                <select value={form.unit} onChange={f('unit')}
+                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 appearance-none bg-white">
+                  {INV_UNITS.map(u => <option key={u}>{u}</option>)}
+                </select>
+                <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+          {/* Current Stock + Min Stock */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Current Stock *</label>
+              <input type="number" min={0} value={form.currentStock} onChange={f('currentStock')} placeholder="0"
+                className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 transition-colors" />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Min Stock Level *</label>
+              <input type="number" min={0} value={form.minStock} onChange={f('minStock')} placeholder="0"
+                className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 transition-colors" />
+            </div>
+          </div>
+          {/* Unit Price + Supplier */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Unit Price (€)</label>
+              <input type="number" min={0} step={0.01} value={form.unitPrice} onChange={f('unitPrice')} placeholder="0.00"
+                className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 transition-colors" />
+            </div>
+            <div>
+              <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Supplier</label>
+              <input value={form.supplier} onChange={f('supplier')} placeholder="Supplier name"
+                className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 transition-colors" />
+            </div>
+          </div>
+          {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
+        </div>
+        <div className="px-5 pb-6 pt-4 border-t border-gray-100">
+          <button onClick={handleSave} disabled={saving}
+            className="w-full bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-2xl transition-all active:scale-[0.98] disabled:opacity-50">
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Item'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Stock Adjust Modal ────────────────────────────────────────────────────────
+
+interface AdjustModalProps {
+  restaurantId: string;
+  item: InventoryItem;
+  onClose: () => void;
+}
+
+function AdjustModal({ restaurantId, item, onClose }: AdjustModalProps) {
+  const [delta, setDelta]   = useState('');
+  const [reason, setReason] = useState(ADJUST_REASONS[0]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState('');
+
+  const parsedDelta  = parseFloat(delta) || 0;
+  const newStock     = Math.max(0, item.currentStock + parsedDelta);
+  const deltaDisplay = parsedDelta > 0 ? `+${parsedDelta}` : parsedDelta < 0 ? `${parsedDelta}` : '0';
+
+  function quickAdd(n: number) {
+    setDelta(prev => String((parseFloat(prev) || 0) + n));
+  }
+
+  async function handleSave() {
+    if (delta === '' || isNaN(parsedDelta) || parsedDelta === 0) {
+      setError('Enter a non-zero adjustment amount');
+      return;
+    }
+    setSaving(true);
+    try {
+      await update(refs.inventoryItem(restaurantId, item.id), {
+        currentStock: newStock,
+        lastUpdated: Date.now(),
+      });
+      onClose();
+    } catch {
+      setError('Failed to save. Please try again.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div className="bg-white rounded-t-3xl flex flex-col"
+        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 30, stiffness: 280 }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-black text-gray-900">Adjust Stock</h2>
+            <p className="text-sm text-gray-400 mt-0.5">{item.name} · {item.unit}</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {/* Current → New preview */}
+          <div className="flex items-center justify-between bg-gray-50 rounded-2xl px-4 py-3">
+            <div className="text-center">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Current</p>
+              <p className="text-2xl font-black text-gray-900 mt-0.5">{item.currentStock}</p>
+            </div>
+            <div className="text-gray-300 text-xl">→</div>
+            <div className="text-center">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">New</p>
+              <p className={`text-2xl font-black mt-0.5 ${newStock <= 0 ? 'text-red-500' : newStock <= item.minStock ? 'text-amber-500' : 'text-green-600'}`}>
+                {newStock}
+              </p>
+            </div>
+            <div className="text-center">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Change</p>
+              <p className={`text-2xl font-black mt-0.5 ${parsedDelta > 0 ? 'text-green-600' : parsedDelta < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                {deltaDisplay}
+              </p>
+            </div>
+          </div>
+          {/* Quick buttons */}
+          <div>
+            <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2">Quick Add</p>
+            <div className="flex gap-2">
+              {[1, 5, 10, 25, 50].map(n => (
+                <button key={n} onClick={() => quickAdd(n)}
+                  className="flex-1 py-2 rounded-xl bg-green-50 text-green-700 font-black text-sm hover:bg-green-100 transition-colors">
+                  +{n}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-2">
+              {[1, 5, 10, 25, 50].map(n => (
+                <button key={n} onClick={() => quickAdd(-n)}
+                  className="flex-1 py-2 rounded-xl bg-red-50 text-red-600 font-black text-sm hover:bg-red-100 transition-colors">
+                  -{n}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Manual input */}
+          <div>
+            <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Manual Amount (+ or -)</label>
+            <input type="number" value={delta} onChange={e => setDelta(e.target.value)} placeholder="e.g. 20 or -3"
+              className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 transition-colors" />
+          </div>
+          {/* Reason */}
+          <div>
+            <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">Reason</label>
+            <div className="relative">
+              <select value={reason} onChange={e => setReason(e.target.value)}
+                className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3 text-gray-900 font-medium outline-none focus:border-orange-400 appearance-none bg-white">
+                {ADJUST_REASONS.map(r => <option key={r}>{r}</option>)}
+              </select>
+              <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+          {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
+        </div>
+        <div className="px-5 pb-6 pt-2 border-t border-gray-100">
+          <button onClick={handleSave} disabled={saving}
+            className="w-full bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-2xl transition-all active:scale-[0.98] disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save Adjustment'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Phase 2 — AI Bill Scanning ────────────────────────────────────────────────
+
+interface ExtractedItem {
+  name: string;
+  quantity: number;
+  unit: string;
+  unitPrice?: number | null;
+  totalPrice?: number | null;
+}
+interface ExtractedBill {
+  supplier?: string | null;
+  date?: string | null;
+  invoiceNumber?: string | null;
+  total?: number | null;
+  items: ExtractedItem[];
+}
+interface ReviewItem extends ExtractedItem {
+  matchedId: string | null;
+  action: 'add_stock' | 'skip';
+  newName: string;
+  newUnit: string;
+  newCategory: string;
+}
+
+function findBestMatch(name: string, items: InventoryItem[]): InventoryItem | null {
+  const lower = name.toLowerCase();
+  const exact = items.find(i => i.name.toLowerCase() === lower);
+  if (exact) return exact;
+  const partial = items.find(
+    i => i.name.toLowerCase().includes(lower) || lower.includes(i.name.toLowerCase()),
+  );
+  return partial ?? null;
+}
+
+// ── BillUpload ────────────────────────────────────────────────────────────────
+
+function BillUpload({
+  restaurant,
+  inventoryItems,
+  onDone,
+}: {
+  restaurant: Restaurant;
+  inventoryItems: InventoryItem[];
+  onDone: () => void;
+}) {
+  const [stage, setStage] = useState<'idle' | 'uploading' | 'processing' | 'review' | 'saving' | 'done'>('idle');
+  const [error,   setError]       = useState('');
+  const [bill,    setBill]        = useState<ExtractedBill | null>(null);
+  const [review,  setReview]      = useState<ReviewItem[]>([]);
+  const [saved,   setSaved]       = useState(0);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(file: File) {
+    setError('');
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    if (!allowed.includes(file.type)) {
+      setError('Please upload a JPG, PNG, WebP, or PDF file.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError('File is too large. Maximum size is 10 MB.');
+      return;
+    }
+
+    try {
+      // 1. Upload to Firebase Storage
+      setStage('uploading');
+      const path = `bills/${restaurant.id}/${Date.now()}_${file.name}`;
+      await uploadBytes(storageRef(storage, path), file);
+
+      // 2. Call Cloud Function
+      setStage('processing');
+      const fn = httpsCallable<{ storagePath: string; mimeType: string }, ExtractedBill>(
+        firebaseFunctions, 'extractBillItems',
+      );
+      const { data } = await fn({ storagePath: path, mimeType: file.type });
+      setBill(data);
+
+      // 3. Build review list with fuzzy matching to existing inventory
+      const items: ReviewItem[] = (data.items ?? []).map(item => {
+        const match = findBestMatch(item.name, inventoryItems);
+        return {
+          ...item,
+          matchedId:   match?.id   ?? null,
+          action:      'add_stock',
+          newName:     item.name,
+          newUnit:     match?.unit     ?? item.unit     ?? 'pcs',
+          newCategory: match?.category ?? INV_CATEGORIES[0],
+        };
+      });
+      setReview(items);
+      setStage('review');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+      setError(msg);
+      setStage('idle');
+    }
+  }
+
+  async function handleConfirm() {
+    setStage('saving');
+    let count = 0;
+    for (const item of review) {
+      if (item.action === 'skip') continue;
+      try {
+        if (item.matchedId) {
+          const existing = inventoryItems.find(i => i.id === item.matchedId)!;
+          await update(refs.inventoryItem(restaurant.id, item.matchedId), {
+            currentStock: existing.currentStock + item.quantity,
+            lastUpdated:  Date.now(),
+          });
+        } else {
+          await push(refs.inventoryItems(restaurant.id), {
+            name:         item.newName.trim(),
+            category:     item.newCategory,
+            unit:         item.newUnit,
+            currentStock: item.quantity,
+            minStock:     0,
+            ...(item.unitPrice != null ? { unitPrice: item.unitPrice } : {}),
+            lastUpdated:  Date.now(),
+          });
+        }
+        count++;
+      } catch { /* skip failed lines silently */ }
+    }
+    setSaved(count);
+    setStage('done');
+  }
+
+  /* ── Done ── */
+  if (stage === 'done') return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
+        <CheckCircle2 size={32} className="text-green-500" />
+      </div>
+      <p className="text-xl font-black text-gray-900 mb-1">Done!</p>
+      <p className="text-gray-400 text-sm mb-6">
+        {saved} item{saved !== 1 ? 's' : ''} updated in inventory
+      </p>
+      <button onClick={onDone}
+        className="bg-orange-500 hover:bg-orange-600 text-white font-black px-6 py-3 rounded-2xl transition-all active:scale-[0.97]">
+        Back to Inventory
+      </button>
+    </div>
+  );
+
+  /* ── Review ── */
+  if (stage === 'review' && bill) return (
+    <div>
+      {/* Bill summary chip */}
+      <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 mb-4">
+        <p className="font-black text-gray-900 text-sm mb-1.5">Bill extracted ✓</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+          {bill.supplier       && <span>📦 {bill.supplier}</span>}
+          {bill.date           && <span>📅 {bill.date}</span>}
+          {bill.invoiceNumber  && <span>#️⃣ {bill.invoiceNumber}</span>}
+          {bill.total   != null && <span>💶 €{Number(bill.total).toFixed(2)}</span>}
+        </div>
+      </div>
+
+      <p className="text-xs font-black text-gray-500 uppercase tracking-widest mb-3">
+        {review.length} item{review.length !== 1 ? 's' : ''} found — review &amp; confirm
+      </p>
+
+      <div className="space-y-2.5 mb-6">
+        {review.map((item, idx) => {
+          const existing = item.matchedId
+            ? inventoryItems.find(i => i.id === item.matchedId)
+            : null;
+          return (
+            <div key={idx}
+              className={`bg-white rounded-2xl border p-3.5 transition-opacity ${
+                item.action === 'skip' ? 'opacity-40 border-gray-100' : 'border-gray-200'
+              }`}>
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex-1 min-w-0">
+                  <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    +{item.quantity} {item.unit}
+                    {item.unitPrice != null && ` · €${Number(item.unitPrice).toFixed(2)}/${item.unit}`}
+                  </p>
+                </div>
+                <button
+                  onClick={() =>
+                    setReview(prev =>
+                      prev.map((r, i) =>
+                        i === idx ? { ...r, action: r.action === 'skip' ? 'add_stock' : 'skip' } : r,
+                      ),
+                    )
+                  }
+                  className={`flex-shrink-0 text-xs font-black px-2.5 py-1 rounded-full transition-all ${
+                    item.action === 'skip'
+                      ? 'bg-gray-100 text-gray-400'
+                      : 'bg-orange-100 text-orange-600'
+                  }`}>
+                  {item.action === 'skip' ? 'Skipped' : 'Include'}
+                </button>
+              </div>
+              {item.action === 'add_stock' && (
+                <div className={`text-xs rounded-xl px-3 py-2 ${
+                  existing ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                }`}>
+                  {existing
+                    ? `→ "${existing.name}": ${existing.currentStock} + ${item.quantity} = ${existing.currentStock + item.quantity} ${existing.unit}`
+                    : `→ New item will be created: "${item.newName}"`}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex gap-3">
+        <button onClick={() => setStage('idle')}
+          className="flex-1 border-2 border-gray-200 text-gray-600 font-black py-3 rounded-2xl transition-all">
+          Cancel
+        </button>
+        <button
+          onClick={handleConfirm}
+          disabled={review.every(i => i.action === 'skip')}
+          className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-black py-3 rounded-2xl transition-all active:scale-[0.97]">
+          Confirm {review.filter(i => i.action === 'add_stock').length} Items
+        </button>
+      </div>
+    </div>
+  );
+
+  /* ── Loading states ── */
+  if (stage === 'uploading' || stage === 'processing' || stage === 'saving') return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4" />
+      <p className="font-black text-gray-900">
+        {stage === 'uploading' ? 'Uploading bill…'
+          : stage === 'processing' ? 'Reading bill with AI…'
+          : 'Saving to inventory…'}
+      </p>
+      {stage === 'processing' && (
+        <p className="text-xs text-gray-400 mt-1">This may take 10–30 seconds</p>
+      )}
+    </div>
+  );
+
+  /* ── Idle / upload ── */
+  return (
+    <div>
+      <div
+        onClick={() => fileRef.current?.click()}
+        className="border-2 border-dashed border-orange-300 rounded-3xl p-10 flex flex-col items-center text-center cursor-pointer hover:border-orange-400 hover:bg-orange-50/40 transition-all active:scale-[0.98]">
+        <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mb-4">
+          <Upload size={28} className="text-orange-500" />
+        </div>
+        <p className="font-black text-gray-900 text-lg mb-1">Upload Supplier Bill</p>
+        <p className="text-gray-400 text-sm">Photo or scanned PDF of your delivery note</p>
+        <p className="text-xs text-gray-300 mt-2">JPG · PNG · WebP · PDF — max 10 MB</p>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+      />
+      {error && (
+        <div className="mt-4 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-sm text-red-600 font-medium">
+          {error}
+        </div>
+      )}
+      <div className="mt-6 bg-gray-50 rounded-2xl p-4">
+        <p className="font-black text-gray-700 text-sm mb-2">How it works</p>
+        <ol className="space-y-1.5 text-xs text-gray-500">
+          <li>1. Upload a photo or PDF of your supplier delivery note</li>
+          <li>2. AI reads every item and quantity automatically</li>
+          <li>3. Review — skip anything you don't want to track</li>
+          <li>4. Confirm to add stock to your inventory in one tap</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Inventory Component ──────────────────────────────────────────────────
+
+function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
+  const [items, setItems]           = useState<InventoryItem[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [tab, setTab]               = useState<'items' | 'upload'>('items');
+  const [showAdd, setShowAdd]       = useState(false);
+  const [editItem, setEditItem]     = useState<InventoryItem | null>(null);
+  const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
+  const [deleteId, setDeleteId]     = useState<string | null>(null);
+  const [filter, setFilter]         = useState<'all' | 'low' | 'out'>('all');
+
+  useEffect(() => {
+    const unsub = onValue(refs.inventoryItems(restaurant.id), snap => {
+      if (snap.exists()) {
+        const arr = Object.entries(snap.val() as Record<string, Omit<InventoryItem, 'id'>>)
+          .map(([id, v]) => ({ ...v, id }))
+          .sort((a, b) => {
+            // Sort: out first, then low, then ok; alphabetically within group
+            const order = { out: 0, low: 1, ok: 2 };
+            const diff = order[getStockStatus(a)] - order[getStockStatus(b)];
+            return diff !== 0 ? diff : a.name.localeCompare(b.name);
+          });
+        setItems(arr);
+      } else {
+        setItems([]);
+      }
+      setLoading(false);
+    }, () => {
+      // Permission denied or other error — stop spinning
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [restaurant.id]);
+
+  const outCount = items.filter(i => getStockStatus(i) === 'out').length;
+  const lowCount = items.filter(i => getStockStatus(i) === 'low').length;
+
+  const filtered = items.filter(i => {
+    if (filter === 'low') return getStockStatus(i) === 'low';
+    if (filter === 'out') return getStockStatus(i) === 'out';
+    return true;
+  });
+
+  async function handleDelete(id: string) {
+    await remove(refs.inventoryItem(restaurant.id, id));
+    setDeleteId(null);
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-black text-gray-900">Inventory</h1>
+        <div className="flex items-center gap-2">
+          {tab === 'items' && (
+            <button onClick={() => setShowAdd(true)}
+              className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white font-black px-4 py-2.5 rounded-2xl text-sm transition-all active:scale-[0.97]">
+              <Plus size={16} />
+              Add Item
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-2 mb-5 bg-gray-100 p-1 rounded-2xl">
+        <button
+          onClick={() => setTab('items')}
+          className={`flex-1 py-2 rounded-xl text-sm font-black transition-all ${
+            tab === 'items' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'
+          }`}>
+          📦 Items
+        </button>
+        <button
+          onClick={() => setTab('upload')}
+          className={`flex-1 py-2 rounded-xl text-sm font-black transition-all ${
+            tab === 'upload' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'
+          }`}>
+          🤖 Scan Bill
+        </button>
+      </div>
+
+      {/* Bill upload tab */}
+      {tab === 'upload' && (
+        <BillUpload
+          restaurant={restaurant}
+          inventoryItems={items}
+          onDone={() => setTab('items')}
+        />
+      )}
+
+      {tab === 'items' && (<>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm text-center">
+          <p className="text-2xl font-black text-gray-900">{items.length}</p>
+          <p className="text-xs text-gray-400 font-medium mt-0.5">Total Items</p>
+        </div>
+        <div className={`rounded-2xl p-3 border shadow-sm text-center ${lowCount > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-100'}`}>
+          <p className={`text-2xl font-black ${lowCount > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{lowCount}</p>
+          <p className={`text-xs font-medium mt-0.5 ${lowCount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>Low Stock</p>
+        </div>
+        <div className={`rounded-2xl p-3 border shadow-sm text-center ${outCount > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'}`}>
+          <p className={`text-2xl font-black ${outCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>{outCount}</p>
+          <p className={`text-xs font-medium mt-0.5 ${outCount > 0 ? 'text-red-400' : 'text-gray-400'}`}>Out of Stock</p>
+        </div>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex gap-2 mb-4">
+        {(['all', 'low', 'out'] as const).map(f => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`px-4 py-2 rounded-full text-sm font-black transition-all ${
+              filter === f ? 'bg-orange-500 text-white shadow-sm' : 'bg-gray-100 text-gray-500'
+            }`}>
+            {f === 'all' ? 'All' : f === 'low' ? `Low Stock${lowCount > 0 ? ` (${lowCount})` : ''}` : `Out of Stock${outCount > 0 ? ` (${outCount})` : ''}`}
+          </button>
+        ))}
+      </div>
+
+      {/* Empty state */}
+      {filtered.length === 0 && (
+        <div className="text-center py-16">
+          <Boxes size={48} className="mx-auto text-gray-200 mb-3" />
+          <p className="font-black text-gray-400">
+            {filter === 'all' ? 'No inventory items yet' : `No ${filter === 'low' ? 'low stock' : 'out of stock'} items`}
+          </p>
+          {filter === 'all' && (
+            <button onClick={() => setShowAdd(true)} className="mt-4 text-orange-500 font-black text-sm">
+              + Add your first item
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Items list */}
+      <div className="space-y-2.5">
+        {filtered.map(item => {
+          const status = getStockStatus(item);
+          return (
+            <div key={item.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+              <div className="flex items-start gap-3">
+                {/* Status dot */}
+                <div className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ${
+                  status === 'out' ? 'bg-red-500' : status === 'low' ? 'bg-amber-400' : 'bg-green-500'
+                }`} />
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => setAdjustItem(item)}
+                        className="w-8 h-8 rounded-xl bg-orange-50 flex items-center justify-center hover:bg-orange-100 transition-colors"
+                        title="Adjust stock">
+                        <SlidersHorizontal size={14} className="text-orange-500" />
+                      </button>
+                      <button onClick={() => setEditItem(item)}
+                        className="w-8 h-8 rounded-xl bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                        title="Edit item">
+                        <Pencil size={13} className="text-gray-500" />
+                      </button>
+                      <button onClick={() => setDeleteId(item.id)}
+                        className="w-8 h-8 rounded-xl bg-gray-100 flex items-center justify-center hover:bg-red-50 transition-colors"
+                        title="Delete item">
+                        <Trash2 size={13} className="text-gray-400 hover:text-red-500" />
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">{item.category} · {item.unit}</p>
+                  {/* Stock level bar */}
+                  <div className="mt-2.5 mb-2">
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className={`font-black ${status === 'out' ? 'text-red-500' : status === 'low' ? 'text-amber-500' : 'text-green-600'}`}>
+                        {item.currentStock} {item.unit}
+                      </span>
+                      <span className="text-gray-400">min: {item.minStock} {item.unit}</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${
+                        status === 'out' ? 'bg-red-400' : status === 'low' ? 'bg-amber-400' : 'bg-green-400'
+                      }`} style={{
+                        width: item.minStock > 0
+                          ? `${Math.min(100, (item.currentStock / (item.minStock * 3)) * 100)}%`
+                          : item.currentStock > 0 ? '100%' : '0%'
+                      }} />
+                    </div>
+                  </div>
+                  {/* Status badge */}
+                  {status !== 'ok' && (
+                    <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      status === 'out'
+                        ? 'bg-red-50 text-red-600'
+                        : 'bg-amber-50 text-amber-600'
+                    }`}>
+                      <AlertTriangle size={9} />
+                      {status === 'out' ? 'Out of stock' : 'Low stock'}
+                    </div>
+                  )}
+                  {status === 'ok' && (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-green-50 text-green-600">
+                      <CheckCircle2 size={9} />
+                      In stock
+                    </div>
+                  )}
+                  {/* Meta */}
+                  <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                    {item.unitPrice != null && <span>€{item.unitPrice.toFixed(2)}/{item.unit}</span>}
+                    {item.supplier && <span>· {item.supplier}</span>}
+                    <span className="ml-auto">{timeAgo(item.lastUpdated)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Delete confirm */}
+      <AnimatePresence>
+        {deleteId && (
+          <motion.div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-6"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          >
+            <motion.div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl"
+              initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
+            >
+              <h3 className="text-lg font-black text-gray-900 mb-2">Delete Item?</h3>
+              <p className="text-sm text-gray-500 mb-5">This will permanently remove the item from your inventory.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteId(null)}
+                  className="flex-1 border-2 border-gray-200 text-gray-700 font-black py-3 rounded-2xl">
+                  Cancel
+                </button>
+                <button onClick={() => handleDelete(deleteId)}
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black py-3 rounded-2xl transition-all">
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modals */}
+      <AnimatePresence>
+        {showAdd && (
+          <ItemModal restaurantId={restaurant.id} onClose={() => setShowAdd(false)} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {editItem && (
+          <ItemModal restaurantId={restaurant.id} item={editItem} onClose={() => setEditItem(null)} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {adjustItem && (
+          <AdjustModal restaurantId={restaurant.id} item={adjustItem} onClose={() => setAdjustItem(null)} />
+        )}
+      </AnimatePresence>
+      </>)}
+    </div>
+  );
+}
+
 // ─── Admin Shell ──────────────────────────────────────────────────────────────
 
 const NAV = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '' },
   { icon: UtensilsCrossed, label: 'Menu',      path: 'menu' },
+  { icon: Boxes,           label: 'Inventory', path: 'inventory' },
   { icon: Package,         label: 'Orders',    path: 'orders' },
   { icon: BarChart2,       label: 'Analytics', path: 'analytics' },
-  { icon: QrCode,          label: 'QR Codes',  path: 'qr' },
+  { icon: QrCode,          label: 'QR',        path: 'qr' },
   { icon: Settings,        label: 'Settings',  path: 'settings' },
 ];
 
@@ -1456,12 +2303,13 @@ function AdminShell() {
 
   // Map the sub-route under /admin to a human-readable section label.
   const SECTION_TITLES: Record<string, string> = {
-    '/admin':           'Dashboard',
-    '/admin/menu':      'Menu',
-    '/admin/orders':    'Orders',
-    '/admin/analytics': 'Analytics',
-    '/admin/qr':        'QR Codes',
-    '/admin/settings':  'Settings',
+    '/admin':            'Dashboard',
+    '/admin/menu':       'Menu',
+    '/admin/inventory':  'Inventory',
+    '/admin/orders':     'Orders',
+    '/admin/analytics':  'Analytics',
+    '/admin/qr':         'QR Codes',
+    '/admin/settings':   'Settings',
   };
   const section = SECTION_TITLES[location.pathname] ?? 'Admin';
   useDocumentTitle(restaurant ? `${section} · ${restaurant.name}` : section);
@@ -1514,11 +2362,12 @@ function AdminShell() {
       <div className="flex-1 overflow-y-auto p-4 pb-24 max-w-2xl mx-auto w-full">
         <Routes>
           <Route index element={<Dashboard restaurant={restaurant} />} />
-          <Route path="menu" element={<MenuManager restaurant={restaurant} />} />
+          <Route path="menu"      element={<MenuManager        restaurant={restaurant} />} />
+          <Route path="inventory" element={<InventoryManager   restaurant={restaurant} />} />
           <Route path="orders"    element={<OrdersHistory      restaurant={restaurant} />} />
           <Route path="analytics" element={<AnalyticsDashboard restaurant={restaurant} />} />
           <Route path="qr"        element={<QRGenerator        restaurant={restaurant} />} />
-          <Route path="settings" element={<SettingsPanel restaurant={restaurant} />} />
+          <Route path="settings"  element={<SettingsPanel      restaurant={restaurant} />} />
         </Routes>
       </div>
 
@@ -1530,12 +2379,12 @@ function AdminShell() {
             to={`/admin/${item.path}`}
             end={item.path === ''}
             className={({ isActive }) =>
-              `flex flex-col items-center gap-0.5 px-3 py-1 rounded-xl transition-colors ${
+              `flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-colors ${
                 isActive ? 'text-orange-500' : 'text-gray-400'
               }`
             }
           >
-            <item.icon size={22} />
+            <item.icon size={20} />
             <span className="text-xs font-medium">{item.label}</span>
           </NavLink>
         ))}
