@@ -27,6 +27,7 @@ export interface MenuItem {
   popular?: boolean;
   tags?: string[];   // dietary flags: 'vegetarian'|'vegan'|'spicy'|'gluten-free'|'dairy-free'|'halal'
   modifierGroups?: Record<string, Omit<ModifierGroup, 'id'>>;
+  ingredients?: Record<string, number>; // inventoryItemId → qty to deduct per one serving
 }
 
 export interface Restaurant {
@@ -93,4 +94,5 @@ export interface Order {
   paymentStatus?: string;
   paidAt?: number;
   review?: OrderReview;
+  inventoryDeducted?: boolean; // true after stock was deducted for this order
 }

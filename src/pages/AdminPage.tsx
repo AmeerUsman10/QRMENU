@@ -14,7 +14,7 @@ import {
 import { onValue, set, get, update, push, remove, query, orderByChild, equalTo } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL, getBytes } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
-import { auth, refs, storage, firebaseFunctions } from '../lib/firebase';
+import { auth, refs, storage, firebaseFunctions, runTransaction } from '../lib/firebase';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Restaurant, MenuItem, Order, InventoryItem } from '../types';
 
@@ -394,6 +394,7 @@ interface ItemFormData {
   image: string;
   available: boolean;
   popular: boolean;
+  ingredients: Record<string, number>; // inventoryItemId → qty per serving
 }
 
 function MenuManager({ restaurant }: { restaurant: Restaurant }) {
@@ -402,6 +403,20 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
   const [activeCategory, setActiveCategory] = useState<string>(restaurant.categories?.[0] ?? '');
   const [newCategory, setNewCategory] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
+  const [invItems, setInvItems] = useState<InventoryItem[]>([]);
+
+  useEffect(() => {
+    const unsub = onValue(refs.inventoryItems(restaurant.id), snap => {
+      if (snap.exists()) {
+        setInvItems(Object.entries(snap.val() as Record<string, Omit<InventoryItem, 'id'>>)
+          .map(([id, v]) => ({ ...v, id }))
+          .sort((a, b) => a.name.localeCompare(b.name)));
+      } else {
+        setInvItems([]);
+      }
+    }, () => setInvItems([]));
+    return () => unsub();
+  }, [restaurant.id]);
 
   const items: MenuItem[] = Object.entries(restaurant.menu ?? {}).map(([id, item]) => ({
     ...item, id,
@@ -411,7 +426,7 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
 
   async function saveItem(data: ItemFormData & { id?: string }) {
     setSaving(true);
-    const itemData = {
+    const itemData: Record<string, unknown> = {
       name: data.name.trim(),
       price: parseFloat(data.price),
       description: data.description.trim(),
@@ -420,6 +435,9 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
       available: data.available,
       popular: data.popular,
     };
+    // Only save non-empty ingredients map
+    const ing = Object.fromEntries(Object.entries(data.ingredients).filter(([, v]) => v > 0));
+    if (Object.keys(ing).length > 0) itemData.ingredients = ing;
     if (data.id) {
       await update(refs.menuItem(restaurant.id, data.id), itemData);
     } else {
@@ -463,7 +481,7 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
       <div className="flex items-center justify-between mb-5">
         <h2 className="text-xl font-bold text-gray-900">Menu</h2>
         <button
-          onClick={() => setEditItem({ name: '', price: '', description: '', category: activeCategory, image: '', available: true, popular: false })}
+          onClick={() => setEditItem({ name: '', price: '', description: '', category: activeCategory, image: '', available: true, popular: false, ingredients: {} })}
           className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-xl text-sm font-semibold"
         >
           <Plus size={16} /> Add item
@@ -534,7 +552,7 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
                     {item.available ? 'On' : 'Off'}
                   </button>
                   <button
-                    onClick={() => setEditItem({ id: item.id, name: item.name, price: String(item.price), description: item.description ?? '', category: item.category, image: item.image, available: item.available, popular: item.popular ?? false })}
+                    onClick={() => setEditItem({ id: item.id, name: item.name, price: String(item.price), description: item.description ?? '', category: item.category, image: item.image, available: item.available, popular: item.popular ?? false, ingredients: item.ingredients ?? {} })}
                     aria-label={`Edit ${item.name}`}
                     className="p-2 text-gray-400 hover:text-gray-700"
                   >
@@ -642,6 +660,59 @@ function MenuManager({ restaurant }: { restaurant: Restaurant }) {
                     </label>
                   ))}
                 </div>
+                {/* Ingredients for auto stock deduction */}
+                {invItems.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Ingredients <span className="text-gray-400 font-normal">(auto stock deduction)</span>
+                    </label>
+                    <div className="space-y-2">
+                      {Object.entries(editItem.ingredients).map(([invId, qty]) => {
+                        const inv = invItems.find(i => i.id === invId);
+                        if (!inv) return null;
+                        return (
+                          <div key={invId} className="flex items-center gap-2 bg-orange-50 rounded-xl px-3 py-2">
+                            <span className="flex-1 text-sm font-medium text-gray-800 truncate">{inv.name}</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={qty}
+                              onChange={e => setEditItem({ ...editItem, ingredients: { ...editItem.ingredients, [invId]: parseFloat(e.target.value) || 0 } })}
+                              className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right outline-none focus:border-orange-400"
+                            />
+                            <span className="text-xs text-gray-400 w-8">{inv.unit}</span>
+                            <button
+                              onClick={() => {
+                                const next = { ...editItem.ingredients };
+                                delete next[invId];
+                                setEditItem({ ...editItem, ingredients: next });
+                              }}
+                              className="text-gray-300 hover:text-red-400 transition-colors"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <select
+                        value=""
+                        onChange={e => {
+                          if (!e.target.value) return;
+                          setEditItem({ ...editItem, ingredients: { ...editItem.ingredients, [e.target.value]: 1 } });
+                          e.target.value = '';
+                        }}
+                        className="w-full border border-dashed border-gray-300 rounded-xl px-3 py-2 text-sm text-gray-500 bg-white outline-none focus:border-orange-400"
+                      >
+                        <option value="">+ Add ingredient…</option>
+                        {invItems
+                          .filter(i => !editItem.ingredients[i.id])
+                          .map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)
+                        }
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => saveItem(editItem)}
@@ -1893,7 +1964,7 @@ function BillUpload({
       </div>
 
       <p className="text-xs font-black text-gray-500 uppercase tracking-widest mb-3">
-        {review.length} item{review.length !== 1 ? 's' : ''} found — review &amp; confirm
+        {review.length} item{review.length !== 1 ? 's' : ''} found — review & confirm
       </p>
 
       <div className="space-y-2.5 mb-6">
@@ -2300,6 +2371,66 @@ const NAV = [
 function AdminShell() {
   const [restaurant, loading] = useRestaurantForUser();
   const location = useLocation();
+  const processingOrders = useRef(new Set<string>());
+
+  // ── Auto stock deduction ──────────────────────────────────────────────────
+  // Runs in the background: whenever an order reaches "preparing" status and
+  // hasn't been deducted yet, subtract the menu item ingredients from inventory.
+  useEffect(() => {
+    if (!restaurant) return;
+
+    const unsub = onValue(refs.restaurantOrders(restaurant.id), async (snap) => {
+      snap.forEach((orderSnap) => {
+        const order = { id: orderSnap.key!, ...orderSnap.val() } as Order & { inventoryDeducted?: boolean };
+        if (order.status !== 'preparing') return;
+        if (order.inventoryDeducted) return;
+        if (processingOrders.current.has(order.id)) return;
+
+        processingOrders.current.add(order.id);
+
+        (async () => {
+          try {
+            const cartItems = JSON.parse(order.items) as Array<{ id: string; quantity: number }>;
+            const menuSnap = await get(refs.menu(restaurant.id));
+            if (!menuSnap.exists()) return;
+            const menu = menuSnap.val() as Record<string, { ingredients?: Record<string, number> }>;
+
+            // Accumulate total deductions across all cart items
+            const deductions: Record<string, number> = {};
+            for (const cartItem of cartItems) {
+              const menuItem = menu[cartItem.id];
+              if (!menuItem?.ingredients) continue;
+              for (const [invId, qtyPerServing] of Object.entries(menuItem.ingredients)) {
+                deductions[invId] = (deductions[invId] ?? 0) + qtyPerServing * cartItem.quantity;
+              }
+            }
+
+            // Apply deductions atomically
+            await Promise.all(
+              Object.entries(deductions).map(([invId, totalQty]) =>
+                runTransaction(refs.inventoryItem(restaurant.id, invId), (current) => {
+                  if (!current) return current;
+                  return {
+                    ...current,
+                    currentStock: Math.max(0, (current.currentStock as number) - totalQty),
+                    lastUpdated: Date.now(),
+                  };
+                }),
+              ),
+            );
+
+            // Mark order so we never deduct twice
+            await update(refs.order(order.id), { inventoryDeducted: true });
+          } catch (err) {
+            processingOrders.current.delete(order.id); // allow retry next tick
+            console.error('[inventory] deduction failed for order', order.id, err);
+          }
+        })();
+      });
+    });
+
+    return () => unsub();
+  }, [restaurant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Map the sub-route under /admin to a human-readable section label.
   const SECTION_TITLES: Record<string, string> = {
