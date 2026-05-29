@@ -21,6 +21,10 @@
         ".write": "auth != null && root.child('restaurants/' + $restaurantId + '/adminEmail').val() == auth.token.email"
       }
     },
+    "platform": {
+      ".read": false,
+      ".write": false
+    },
     "restaurant_counters": {
       "$restaurantId": {
         ".read": true,

@@ -5,11 +5,21 @@ import Stripe from 'stripe';
 admin.initializeApp();
 const db = admin.database();
 
-// Set STRIPE_SECRET_KEY in Firebase config:
-//   firebase functions:config:set stripe.secret="sk_live_..."
+// ─── Configuration helpers ────────────────────────────────────────────────────
+//
+// All secrets are stored in the Firebase Realtime Database (admin SDK reads
+// bypass security rules — clients cannot access these paths).
+//
+// Platform-level keys live at:   /platform/anthropicKey
+// Per-restaurant Stripe keys at: /restaurants/{id}/stripeSecretKey  (already there)
+//
+// To set the Anthropic key, write it to /platform/anthropicKey via the
+// Firebase Console → Realtime Database, or use the Admin Settings UI.
 
-// Set Anthropic API key in Firebase config:
-//   firebase functions:config:set anthropic.key="sk-ant-..."
+async function getAnthropicKey(): Promise<string> {
+  const snap = await db.ref('platform/anthropicKey').get();
+  return snap.exists() ? String(snap.val()) : '';
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,8 +39,8 @@ interface ExtractedBill {
   items: ExtractedItem[];
 }
 
-// POST /createCheckoutSession
-// Body: { restaurantId, orderId, items, tableNumber, successUrl, cancelUrl }
+// ── createCheckoutSession ─────────────────────────────────────────────────────
+
 export const createCheckoutSession = functions.https.onCall(async (data) => {
   const { restaurantId, orderId, items, tableNumber, successUrl, cancelUrl } = data as {
     restaurantId: string;
@@ -45,22 +55,21 @@ export const createCheckoutSession = functions.https.onCall(async (data) => {
     throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');
   }
 
-  // Load restaurant settings to see if they configured a custom Stripe key
   const restaurantSnap = await db.ref(`restaurants/${restaurantId}`).get();
   if (!restaurantSnap.exists()) {
     throw new functions.https.HttpsError('not-found', 'Restaurant not found');
   }
-  const restaurant = restaurantSnap.val();
+  const restaurant = restaurantSnap.val() as { stripeSecretKey?: string };
 
-  // Dynamically load the secret key, falling back to the global environment configuration
-  const secretKey = restaurant.stripeSecretKey || functions.config().stripe?.secret || process.env.STRIPE_SECRET_KEY || '';
+  const secretKey = restaurant.stripeSecretKey ?? '';
   if (!secretKey) {
-    throw new functions.https.HttpsError('failed-precondition', 'Stripe secret key not configured on platform or restaurant');
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Stripe secret key not configured for this restaurant',
+    );
   }
 
-  const activeStripe = new Stripe(secretKey, {
-    apiVersion: '2024-06-20',
-  });
+  const activeStripe = new Stripe(secretKey, { apiVersion: '2024-06-20' });
 
   const lineItems = items.map((item) => ({
     price_data: {
@@ -82,31 +91,31 @@ export const createCheckoutSession = functions.https.onCall(async (data) => {
     cancel_url: cancelUrl,
     client_reference_id: orderId,
     metadata: { restaurantId, tableNumber: String(tableNumber) },
-    payment_intent_data: {
-      metadata: { restaurantId, tableNumber: String(tableNumber) },
-    },
+    payment_intent_data: { metadata: { restaurantId, tableNumber: String(tableNumber) } },
   });
 
   return { url: session.url, sessionId: session.id };
 });
 
-// Stripe webhook — confirms payment and updates order status
+// ── stripeWebhook ─────────────────────────────────────────────────────────────
+
 export const stripeWebhook = functions.https.onRequest(async (req, res) => {
   const sig = req.headers['stripe-signature'] as string;
   const restaurantId = req.query.r as string | undefined;
 
-  let secretKey = functions.config().stripe?.secret ?? process.env.STRIPE_SECRET_KEY ?? '';
-  let webhookSecret = functions.config().stripe?.webhook_secret ?? process.env.STRIPE_WEBHOOK_SECRET ?? '';
+  let secretKey = '';
+  let webhookSecret = '';
 
   if (restaurantId) {
     try {
       const restaurantSnap = await db.ref(`restaurants/${restaurantId}`).get();
       if (restaurantSnap.exists()) {
-        const restaurant = restaurantSnap.val();
-        if (restaurant.stripeSecretKey && restaurant.stripeWebhookSecret) {
-          secretKey = restaurant.stripeSecretKey;
-          webhookSecret = restaurant.stripeWebhookSecret;
-        }
+        const r = restaurantSnap.val() as {
+          stripeSecretKey?: string;
+          stripeWebhookSecret?: string;
+        };
+        secretKey     = r.stripeSecretKey     ?? '';
+        webhookSecret = r.stripeWebhookSecret ?? '';
       }
     } catch (err) {
       console.error(`Error loading restaurant keys for ID ${restaurantId}:`, err);
@@ -114,13 +123,11 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
   }
 
   if (!secretKey || !webhookSecret) {
-    res.status(400).send('Webhook Error: Stripe credentials are not configured');
+    res.status(400).send('Webhook Error: Stripe credentials are not configured for this restaurant');
     return;
   }
 
-  const activeStripe = new Stripe(secretKey, {
-    apiVersion: '2024-06-20',
-  });
+  const activeStripe = new Stripe(secretKey, { apiVersion: '2024-06-20' });
 
   let event: Stripe.Event;
   try {
@@ -150,25 +157,21 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
 // Reads a supplier invoice (image or PDF) from Firebase Storage using Claude AI
 // and returns the parsed list of items + bill metadata.
 //
-// Call from the frontend with:
-//   httpsCallable(firebaseFunctions, 'extractBillItems')({ storagePath, mimeType })
+// To enable AI scanning, store your Anthropic API key in the Firebase Realtime
+// Database at /platform/anthropicKey  (Firebase Console → Realtime Database).
 //
 export const extractBillItems = functions
   .runWith({ timeoutSeconds: 120, memory: '512MB' })
   .https.onCall(async (data, context) => {
-    // Must be authenticated
     if (!context.auth) {
       throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
     }
 
-    const apiKey =
-      (functions.config().anthropic as { key?: string } | undefined)?.key ??
-      process.env.ANTHROPIC_API_KEY ??
-      '';
+    const apiKey = await getAnthropicKey();
     if (!apiKey) {
       throw new functions.https.HttpsError(
         'failed-precondition',
-        'Anthropic API key not configured. Run: firebase functions:config:set anthropic.key="sk-ant-..."',
+        'Anthropic API key not configured. Add it to /platform/anthropicKey in the Firebase Realtime Database.',
       );
     }
 
@@ -183,8 +186,6 @@ export const extractBillItems = functions
     const base64Data = fileBuffer.toString('base64');
 
     const isPDF = mimeType === 'application/pdf';
-
-    // Build the appropriate content block for Claude
     const fileBlock = isPDF
       ? { type: 'document', source: { type: 'base64', media_type: mimeType, data: base64Data } }
       : { type: 'image',    source: { type: 'base64', media_type: mimeType, data: base64Data } };
@@ -251,7 +252,6 @@ Rules:
 
     let parsed: ExtractedBill;
     try {
-      // Strip markdown code fences if Claude added them anyway
       const clean = rawText.replace(/^```(?:json)?\s*/m, '').replace(/\s*```$/m, '').trim();
       parsed = JSON.parse(clean) as ExtractedBill;
     } catch {
