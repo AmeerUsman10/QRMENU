@@ -2094,6 +2094,8 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
   const [deleteId, setDeleteId]     = useState<string | null>(null);
   const [filter, setFilter]         = useState<'all' | 'low' | 'out'>('all');
+  const [search, setSearch]         = useState('');
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const unsub = onValue(refs.inventoryItems(restaurant.id), snap => {
@@ -2122,10 +2124,31 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
   const lowCount = items.filter(i => getStockStatus(i) === 'low').length;
 
   const filtered = items.filter(i => {
-    if (filter === 'low') return getStockStatus(i) === 'low';
-    if (filter === 'out') return getStockStatus(i) === 'out';
+    if (filter === 'low' && getStockStatus(i) !== 'low') return false;
+    if (filter === 'out' && getStockStatus(i) !== 'out') return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q) || (i.supplier ?? '').toLowerCase().includes(q);
+    }
     return true;
   });
+
+  // Group filtered items by category
+  const grouped = filtered.reduce<Record<string, InventoryItem[]>>((acc, item) => {
+    const cat = item.category || 'Uncategorised';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {});
+  const sortedCategories = Object.keys(grouped).sort();
+
+  function toggleCat(cat: string) {
+    setCollapsedCats(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  }
 
   async function handleDelete(id: string) {
     await remove(refs.inventoryItem(restaurant.id, id));
@@ -2184,7 +2207,7 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
       {tab === 'items' && (<>
 
       {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm text-center">
           <p className="text-2xl font-black text-gray-900">{items.length}</p>
           <p className="text-xs text-gray-400 font-medium mt-0.5">Total Items</p>
@@ -2199,6 +2222,24 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
         </div>
       </div>
 
+      {/* Search bar */}
+      <div className="relative mb-3">
+        <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        </div>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search items, categories, suppliers…"
+          className="w-full bg-white border border-gray-200 rounded-2xl pl-10 pr-4 py-2.5 text-sm text-gray-900 outline-none focus:border-orange-400 transition-colors"
+        />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500">
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
       {/* Filter tabs */}
       <div className="flex gap-2 mb-4">
         {(['all', 'low', 'out'] as const).map(f => (
@@ -2206,9 +2247,12 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
             className={`px-4 py-2 rounded-full text-sm font-black transition-all ${
               filter === f ? 'bg-orange-500 text-white shadow-sm' : 'bg-gray-100 text-gray-500'
             }`}>
-            {f === 'all' ? 'All' : f === 'low' ? `Low Stock${lowCount > 0 ? ` (${lowCount})` : ''}` : `Out of Stock${outCount > 0 ? ` (${outCount})` : ''}`}
+            {f === 'all' ? 'All' : f === 'low' ? `Low${lowCount > 0 ? ` (${lowCount})` : ''}` : `Out${outCount > 0 ? ` (${outCount})` : ''}`}
           </button>
         ))}
+        {search && (
+          <span className="ml-auto text-xs text-gray-400 self-center">{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
+        )}
       </div>
 
       {/* Empty state */}
@@ -2216,9 +2260,9 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
         <div className="text-center py-16">
           <Boxes size={48} className="mx-auto text-gray-200 mb-3" />
           <p className="font-black text-gray-400">
-            {filter === 'all' ? 'No inventory items yet' : `No ${filter === 'low' ? 'low stock' : 'out of stock'} items`}
+            {search ? `No items matching "${search}"` : filter === 'all' ? 'No inventory items yet' : `No ${filter === 'low' ? 'low stock' : 'out of stock'} items`}
           </p>
-          {filter === 'all' && (
+          {!search && filter === 'all' && (
             <button onClick={() => setShowAdd(true)} className="mt-4 text-orange-500 font-black text-sm">
               + Add your first item
             </button>
@@ -2226,84 +2270,108 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
         </div>
       )}
 
-      {/* Items list */}
-      <div className="space-y-2.5">
-        {filtered.map(item => {
-          const status = getStockStatus(item);
+      {/* Grouped by category */}
+      <div className="space-y-3">
+        {sortedCategories.map(cat => {
+          const catItems = grouped[cat];
+          const catLow  = catItems.filter(i => getStockStatus(i) === 'low').length;
+          const catOut  = catItems.filter(i => getStockStatus(i) === 'out').length;
+          const isCollapsed = collapsedCats.has(cat);
+
           return (
-            <div key={item.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-              <div className="flex items-start gap-3">
-                {/* Status dot */}
-                <div className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 ${
-                  status === 'out' ? 'bg-red-500' : status === 'low' ? 'bg-amber-400' : 'bg-green-500'
-                }`} />
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
-                    {/* Action buttons */}
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => setAdjustItem(item)}
-                        className="w-8 h-8 rounded-xl bg-orange-50 flex items-center justify-center hover:bg-orange-100 transition-colors"
-                        title="Adjust stock">
-                        <SlidersHorizontal size={14} className="text-orange-500" />
-                      </button>
-                      <button onClick={() => setEditItem(item)}
-                        className="w-8 h-8 rounded-xl bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
-                        title="Edit item">
-                        <Pencil size={13} className="text-gray-500" />
-                      </button>
-                      <button onClick={() => setDeleteId(item.id)}
-                        className="w-8 h-8 rounded-xl bg-gray-100 flex items-center justify-center hover:bg-red-50 transition-colors"
-                        title="Delete item">
-                        <Trash2 size={13} className="text-gray-400 hover:text-red-500" />
-                      </button>
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-0.5">{item.category} · {item.unit}</p>
-                  {/* Stock level bar */}
-                  <div className="mt-2.5 mb-2">
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className={`font-black ${status === 'out' ? 'text-red-500' : status === 'low' ? 'text-amber-500' : 'text-green-600'}`}>
-                        {item.currentStock} {item.unit}
-                      </span>
-                      <span className="text-gray-400">min: {item.minStock} {item.unit}</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${
-                        status === 'out' ? 'bg-red-400' : status === 'low' ? 'bg-amber-400' : 'bg-green-400'
-                      }`} style={{
-                        width: item.minStock > 0
-                          ? `${Math.min(100, (item.currentStock / (item.minStock * 3)) * 100)}%`
-                          : item.currentStock > 0 ? '100%' : '0%'
-                      }} />
-                    </div>
-                  </div>
-                  {/* Status badge */}
-                  {status !== 'ok' && (
-                    <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${
-                      status === 'out'
-                        ? 'bg-red-50 text-red-600'
-                        : 'bg-amber-50 text-amber-600'
-                    }`}>
-                      <AlertTriangle size={9} />
-                      {status === 'out' ? 'Out of stock' : 'Low stock'}
-                    </div>
+            <div key={cat} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              {/* Category header — tap to collapse */}
+              <button
+                onClick={() => toggleCat(cat)}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
+              >
+                <ChevronDown size={16} className={`text-gray-400 transition-transform flex-shrink-0 ${isCollapsed ? '-rotate-90' : ''}`} />
+                <span className="font-black text-gray-800 text-sm flex-1 text-left">{cat}</span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {catOut > 0 && (
+                    <span className="text-[10px] font-black bg-red-50 text-red-600 px-2 py-0.5 rounded-full">
+                      {catOut} out
+                    </span>
                   )}
-                  {status === 'ok' && (
-                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-green-50 text-green-600">
-                      <CheckCircle2 size={9} />
-                      In stock
-                    </div>
+                  {catLow > 0 && (
+                    <span className="text-[10px] font-black bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">
+                      {catLow} low
+                    </span>
                   )}
-                  {/* Meta */}
-                  <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-                    {item.unitPrice != null && <span>€{item.unitPrice.toFixed(2)}/{item.unit}</span>}
-                    {item.supplier && <span>· {item.supplier}</span>}
-                    <span className="ml-auto">{timeAgo(item.lastUpdated)}</span>
-                  </div>
+                  <span className="text-[10px] text-gray-400 font-medium">{catItems.length} item{catItems.length !== 1 ? 's' : ''}</span>
                 </div>
-              </div>
+              </button>
+
+              {/* Items inside category */}
+              {!isCollapsed && (
+                <div className="divide-y divide-gray-50">
+                  {catItems.map(item => {
+                    const status = getStockStatus(item);
+                    return (
+                      <div key={item.id} className="px-4 py-3">
+                        <div className="flex items-start gap-3">
+                          <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                            status === 'out' ? 'bg-red-500' : status === 'low' ? 'bg-amber-400' : 'bg-green-500'
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <button onClick={() => setAdjustItem(item)}
+                                  className="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center hover:bg-orange-100 transition-colors"
+                                  title="Adjust stock">
+                                  <SlidersHorizontal size={13} className="text-orange-500" />
+                                </button>
+                                <button onClick={() => setEditItem(item)}
+                                  className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                                  title="Edit item">
+                                  <Pencil size={12} className="text-gray-500" />
+                                </button>
+                                <button onClick={() => setDeleteId(item.id)}
+                                  className="w-7 h-7 rounded-lg bg-gray-100 flex items-center justify-center hover:bg-red-50 transition-colors"
+                                  title="Delete item">
+                                  <Trash2 size={12} className="text-gray-400 hover:text-red-500" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between text-xs mt-1 mb-1.5">
+                              <span className={`font-black ${status === 'out' ? 'text-red-500' : status === 'low' ? 'text-amber-500' : 'text-green-600'}`}>
+                                {item.currentStock} {item.unit}
+                              </span>
+                              <span className="text-gray-400">min: {item.minStock} {item.unit}</span>
+                            </div>
+                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${
+                                status === 'out' ? 'bg-red-400' : status === 'low' ? 'bg-amber-400' : 'bg-green-400'
+                              }`} style={{
+                                width: item.minStock > 0
+                                  ? `${Math.min(100, (item.currentStock / (item.minStock * 3)) * 100)}%`
+                                  : item.currentStock > 0 ? '100%' : '0%'
+                              }} />
+                            </div>
+                            <div className="flex items-center gap-2 mt-1.5">
+                              {status !== 'ok' ? (
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                  status === 'out' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                  <AlertTriangle size={8} />
+                                  {status === 'out' ? 'Out of stock' : 'Low stock'}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-green-50 text-green-600">
+                                  <CheckCircle2 size={8} />
+                                  In stock
+                                </span>
+                              )}
+                              <span className="text-[10px] text-gray-400 ml-auto">{timeAgo(item.lastUpdated)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
