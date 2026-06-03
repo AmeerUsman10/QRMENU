@@ -2104,10 +2104,45 @@ function BillUpload({
                       </select>
                       <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                     </div>
+                    {/* Editable name / unit / category for new items */}
+                    {!existing && (
+                      <div className="space-y-1.5">
+                        <input
+                          value={item.newName}
+                          onChange={e => setReview(prev => prev.map((r, i) =>
+                            i === idx ? { ...r, newName: e.target.value } : r
+                          ))}
+                          placeholder="Item name"
+                          className="w-full text-xs border border-orange-200 rounded-xl px-3 py-2 bg-orange-50 outline-none focus:border-orange-400 font-medium text-gray-800"
+                        />
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div className="relative">
+                            <select value={item.newUnit}
+                              onChange={e => setReview(prev => prev.map((r, i) =>
+                                i === idx ? { ...r, newUnit: e.target.value } : r
+                              ))}
+                              className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-orange-400 appearance-none">
+                              {INV_UNITS.map(u => <option key={u}>{u}</option>)}
+                            </select>
+                            <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                          </div>
+                          <div className="relative">
+                            <select value={item.newCategory}
+                              onChange={e => setReview(prev => prev.map((r, i) =>
+                                i === idx ? { ...r, newCategory: e.target.value } : r
+                              ))}
+                              className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-orange-400 appearance-none">
+                              {INV_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                            </select>
+                            <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div className={`text-xs rounded-xl px-3 py-2 ${existing ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
                       {existing
                         ? `→ "${existing.name}": ${existing.currentStock} + ${item.quantity} = ${existing.currentStock + item.quantity} ${existing.unit}`
-                        : `→ New item will be created: "${item.newName}"`}
+                        : `→ New item: "${item.newName}" (${item.newUnit} · ${item.newCategory})`}
                     </div>
                   </div>
                 )}
@@ -2214,6 +2249,94 @@ function BillUpload({
   );
 }
 
+// ── Bulk Minimum Stock Setup ──────────────────────────────────────────────────
+
+function BulkMinSetup({ restaurantId, items, onClose }: {
+  restaurantId: string;
+  items: InventoryItem[];
+  onClose: () => void;
+}) {
+  const zeroItems = items.filter(i => i.minStock === 0);
+  const [mins, setMins] = useState<Record<string, string>>(() =>
+    Object.fromEntries(zeroItems.map(i => [i.id, '']))
+  );
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    await Promise.all(
+      zeroItems
+        .filter(i => mins[i.id] !== '' && !isNaN(Number(mins[i.id])))
+        .map(i => update(refs.inventoryItem(restaurantId, i.id), {
+          minStock: parseFloat(mins[i.id]),
+          lastUpdated: Date.now(),
+        }))
+    );
+    setSaving(false);
+    onClose();
+  }
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div className="bg-white rounded-t-3xl max-h-[88vh] flex flex-col"
+        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 30, stiffness: 280 }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-black text-gray-900">Set Minimum Stock</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{zeroItems.length} items with no minimum set</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-5 py-3">
+          <p className="text-xs text-gray-400 mb-3">
+            Leave blank to skip. The system alerts you when stock falls below this level.
+          </p>
+          <div className="space-y-2">
+            {zeroItems.map(item => (
+              <div key={item.id} className="flex items-center gap-3 bg-gray-50 rounded-2xl px-4 py-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-gray-900 truncate">{item.name}</p>
+                  <p className="text-xs text-gray-400">{item.category} · {item.currentStock} {item.unit} in stock</p>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={mins[item.id]}
+                    onChange={e => setMins(prev => ({ ...prev, [item.id]: e.target.value }))}
+                    placeholder="0"
+                    className="w-20 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm text-right font-black outline-none focus:border-orange-400 transition-colors"
+                  />
+                  <span className="text-xs text-gray-400 w-8 truncate">{item.unit}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-black py-4 rounded-2xl transition-all active:scale-[0.97]">
+            {saving ? 'Saving…' : 'Save Minimums'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ── Main Inventory Component ──────────────────────────────────────────────────
 
 function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
@@ -2223,10 +2346,11 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
   const [showAdd, setShowAdd]       = useState(false);
   const [editItem, setEditItem]     = useState<InventoryItem | null>(null);
   const [adjustItem, setAdjustItem] = useState<InventoryItem | null>(null);
-  const [deleteId, setDeleteId]     = useState<string | null>(null);
-  const [filter, setFilter]         = useState<'all' | 'low' | 'out'>('all');
-  const [search, setSearch]         = useState('');
+  const [deleteId, setDeleteId]       = useState<string | null>(null);
+  const [filter, setFilter]           = useState<'all' | 'low' | 'out'>('all');
+  const [search, setSearch]           = useState('');
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [showMinSetup, setShowMinSetup] = useState(false);
 
   useEffect(() => {
     const unsub = onValue(refs.inventoryItems(restaurant.id), snap => {
@@ -2352,6 +2476,21 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
           <p className={`text-xs font-medium mt-0.5 ${outCount > 0 ? 'text-red-400' : 'text-gray-400'}`}>Out of Stock</p>
         </div>
       </div>
+
+      {/* Bulk min stock banner */}
+      {items.filter(i => i.minStock === 0).length > 0 && (
+        <button onClick={() => setShowMinSetup(true)}
+          className="w-full mb-4 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 text-left hover:bg-amber-100 transition-colors">
+          <AlertTriangle size={16} className="text-amber-500 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-black text-amber-800">
+              {items.filter(i => i.minStock === 0).length} items have no minimum stock set
+            </p>
+            <p className="text-xs text-amber-600">Tap to set minimums so low-stock alerts work correctly</p>
+          </div>
+          <ChevronDown size={14} className="text-amber-400 flex-shrink-0 -rotate-90" />
+        </button>
+      )}
 
       {/* Search bar */}
       <div className="relative mb-3">
@@ -2548,6 +2687,11 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
       <AnimatePresence>
         {adjustItem && (
           <AdjustModal restaurantId={restaurant.id} item={adjustItem} onClose={() => setAdjustItem(null)} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showMinSetup && (
+          <BulkMinSetup restaurantId={restaurant.id} items={items} onClose={() => setShowMinSetup(false)} />
         )}
       </AnimatePresence>
       </>)}
