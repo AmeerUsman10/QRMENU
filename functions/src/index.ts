@@ -153,7 +153,7 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
   res.json({ received: true });
 });
 
-// ── extractBillItems ──────────────────────────────────────────────────────────
+// ── extractBillItems ─────────────────────────────────────────────────────────
 // Reads a supplier invoice (image or PDF) from Firebase Storage using Claude AI
 // and returns the parsed list of items + bill metadata.
 //
@@ -167,22 +167,39 @@ export const extractBillItems = functions
       throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
     }
 
-    const apiKey = await getAnthropicKey();
+    let apiKey: string;
+    try {
+      apiKey = await getAnthropicKey();
+    } catch (e) {
+      console.error('[extractBillItems] DB read failed:', e);
+      throw new functions.https.HttpsError('internal', `DB read error: ${(e as Error).message}`);
+    }
     if (!apiKey) {
       throw new functions.https.HttpsError(
         'failed-precondition',
         'Anthropic API key not configured. Add it to /platform/anthropicKey in the Firebase Realtime Database.',
       );
     }
+    console.log('[extractBillItems] API key retrieved, length:', apiKey.length);
 
     const { storagePath, mimeType } = data as { storagePath: string; mimeType: string };
     if (!storagePath || !mimeType) {
       throw new functions.https.HttpsError('invalid-argument', 'storagePath and mimeType are required');
     }
+    console.log('[extractBillItems] storagePath:', storagePath, 'mimeType:', mimeType);
 
     // Download the file from Firebase Storage
-    const bucket = admin.storage().bucket();
-    const [fileBuffer] = await bucket.file(storagePath).download();
+    // Must explicitly name the bucket — the project uses the new Firebase Storage
+    // domain (*.firebasestorage.app) rather than the legacy *.appspot.com default.
+    let fileBuffer: Buffer;
+    try {
+      const bucket = admin.storage().bucket('qr-menu-9a48b.firebasestorage.app');
+      [fileBuffer] = await bucket.file(storagePath).download();
+      console.log('[extractBillItems] file downloaded, size:', fileBuffer.length);
+    } catch (e) {
+      console.error('[extractBillItems] Storage download failed:', e);
+      throw new functions.https.HttpsError('internal', `Storage error: ${(e as Error).message}`);
+    }
     const base64Data = fileBuffer.toString('base64');
 
     const isPDF = mimeType === 'application/pdf';
@@ -224,7 +241,7 @@ Rules:
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-opus-4-5',
         max_tokens: 2048,
         system: systemPrompt,
         messages: [
@@ -241,9 +258,10 @@ Rules:
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('Claude API error:', response.status, errText);
-      throw new functions.https.HttpsError('internal', `AI service error (${response.status}). Please try again.`);
+      console.error('[extractBillItems] Claude API error:', response.status, errText);
+      throw new functions.https.HttpsError('internal', `Claude API error ${response.status}: ${errText.slice(0, 200)}`);
     }
+    console.log('[extractBillItems] Claude API responded OK');
 
     const claudeResult = await response.json() as {
       content: Array<{ type: string; text: string }>;

@@ -1896,7 +1896,8 @@ function BillUpload({
       setReview(items);
       setStage('review');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+      const firebaseErr = err as { code?: string; message?: string };
+      const msg = firebaseErr.message ?? (err instanceof Error ? err.message : 'Something went wrong. Please try again.');
       setError(msg);
       setStage('idle');
     }
