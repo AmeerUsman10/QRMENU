@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -17,6 +17,111 @@ import { httpsCallable } from 'firebase/functions';
 import { auth, refs, storage, firebaseFunctions, runTransaction } from '../lib/firebase';
 import { useDocumentTitle } from '../lib/useDocumentTitle';
 import type { Restaurant, MenuItem, Order, InventoryItem } from '../types';
+
+// ── Admin i18n ────────────────────────────────────────────────────────────────
+
+type AdminLang = 'sl' | 'en';
+const AdminLangCtx = createContext<AdminLang>('en');
+const useT = () => adminT[useContext(AdminLangCtx)];
+
+const adminT = {
+  en: {
+    navDashboard: 'Dashboard', navMenu: 'Menu', navInventory: 'Inventory',
+    navOrders: 'Orders', navAnalytics: 'Analytics', navQR: 'QR', navSettings: 'Settings',
+    cancel: 'Cancel', save: 'Save item', delete: 'Delete', saving: 'Saving…',
+    inventory: 'Inventory', addItem: 'Add Item',
+    tabItems: '📦 Items', tabScanBill: '🤖 Scan Bill',
+    totalItems: 'Total Items', lowStock: 'Low Stock', outOfStock: 'Out of Stock',
+    statusInStock: 'In stock', statusLow: 'Low stock', statusOut: 'Out of stock',
+    searchPlaceholder: 'Search items, categories, suppliers…',
+    filterAll: 'All', filterLow: 'Low', filterOut: 'Out',
+    noItemsYet: 'No inventory items yet', addFirstItem: '+ Add your first item',
+    noMatchSearch: 'No items matching',
+    catOut: 'out', catLow: 'low', minLabel: 'min:',
+    deleteItemTitle: 'Delete Item?',
+    deleteItemMsg: 'This will permanently remove the item from your inventory.',
+    bulkMinBannerTitle: 'items have no minimum stock set',
+    bulkMinBannerSub: 'Tap to set minimums so low-stock alerts work correctly',
+    bulkMinTitle: 'Set Minimum Stock', bulkMinSubtitle: 'items with no minimum set',
+    bulkMinNote: 'Leave blank to skip. The system alerts you when stock falls below this level.',
+    bulkMinSave: 'Save Minimums', inStock: 'in stock',
+    uploadTitle: 'Upload Supplier Bill',
+    uploadSub: 'Photo or scanned PDF of your delivery note',
+    uploadFormats: 'JPG · PNG · WebP · PDF — max 10 MB',
+    autoSkippedNote: 'will be auto-skipped from your remembered list',
+    recentBills: 'Recent Bills', billAdded: 'added', billSkipped: 'skipped',
+    howItWorks: 'How it works',
+    hw1: '1. Upload a photo or PDF of your supplier delivery note',
+    hw2: '2. AI reads every item and quantity automatically',
+    hw3: "3. Review — skip anything you don't want to track",
+    hw4: '4. Confirm to add stock to your inventory in one tap',
+    billExtracted: 'Bill extracted ✓',
+    autoSkippedBanner: 'items auto-skipped from your remembered list',
+    reviewFound: 'found — review & confirm',
+    createNew: '➕ Create new inventory item',
+    include: 'Include', skippedBtn: 'Skipped', autoSkipBtn: '🧠 Auto-skip',
+    uploading: 'Uploading bill…', processing: 'Reading bill with AI…',
+    processingNote: 'This may take 10–30 seconds',
+    doneTitle: 'Done!', doneUpdated: 'updated in inventory',
+    learnedNote: 'to skip next time', remembered: 'Remembered',
+    backToInventory: 'Back to Inventory', unknownSupplier: 'Unknown supplier',
+    confirmBtn: 'Confirm',
+    quickAdd: 'Quick Add', currentLabel: 'Current', newLabel: 'New', changeLabel: 'Change',
+    adjustTitle: 'Adjust Stock', adjustManual: 'Manual Amount (+ or -)', adjustReason: 'Reason',
+    itemName: 'Item Name *', itemPrice: 'Price (€) *', itemDesc: 'Description',
+    itemCategory: 'Category', itemAvailable: 'Available', itemPopular: 'Popular',
+    itemIngredients: 'Ingredients', itemIngredientsNote: '(auto stock deduction)',
+    addIngredient: '+ Add ingredient…',
+  },
+  sl: {
+    navDashboard: 'Nadzorna plošča', navMenu: 'Meni', navInventory: 'Zaloga',
+    navOrders: 'Naročila', navAnalytics: 'Analitika', navQR: 'QR kode', navSettings: 'Nastavitve',
+    cancel: 'Prekliči', save: 'Shrani artikel', delete: 'Izbriši', saving: 'Shranjujem…',
+    inventory: 'Zaloga', addItem: 'Dodaj artikel',
+    tabItems: '📦 Artikli', tabScanBill: '🤖 Skeniraj račun',
+    totalItems: 'Skupaj artiklov', lowStock: 'Malo na zalogi', outOfStock: 'Ni na zalogi',
+    statusInStock: 'Na zalogi', statusLow: 'Malo na zalogi', statusOut: 'Ni na zalogi',
+    searchPlaceholder: 'Iščite po artiklih, kategorijah, dobaviteljih…',
+    filterAll: 'Vse', filterLow: 'Malo', filterOut: 'Ni',
+    noItemsYet: 'Še ni artiklov v zalogi', addFirstItem: '+ Dodaj prvi artikel',
+    noMatchSearch: 'Ni zadetkov za',
+    catOut: 'ni', catLow: 'malo', minLabel: 'min:',
+    deleteItemTitle: 'Izbriši artikel?',
+    deleteItemMsg: 'Ta artikel bo trajno odstranjen iz zaloge.',
+    bulkMinBannerTitle: 'artiklov brez nastavljene minimalne zaloge',
+    bulkMinBannerSub: 'Tapnite za nastavitev minimumov, da opozorila delujejo pravilno',
+    bulkMinTitle: 'Nastavi minimalno zalogo', bulkMinSubtitle: 'artiklov brez nastavljenega minimuma',
+    bulkMinNote: 'Pustite prazno za preskočitev. Sistem vas opozori, ko zaloga pade pod to vrednost.',
+    bulkMinSave: 'Shrani minimume', inStock: 'na zalogi',
+    uploadTitle: 'Naloži dobavni račun',
+    uploadSub: 'Fotografija ali skeniran PDF dobavnice',
+    uploadFormats: 'JPG · PNG · WebP · PDF — največ 10 MB',
+    autoSkippedNote: 'bo samodejno preskočenih iz shranjenega seznama',
+    recentBills: 'Nedavni računi', billAdded: 'dodano', billSkipped: 'preskočeno',
+    howItWorks: 'Kako deluje',
+    hw1: '1. Naložite fotografijo ali PDF dobavnice',
+    hw2: '2. AI samodejno prebere vsak artikel in količino',
+    hw3: '3. Preglejte — preskočite kar ne želite slediti',
+    hw4: '4. Potrdite za posodobitev zaloge z enim dotikom',
+    billExtracted: 'Račun prebran ✓',
+    autoSkippedBanner: 'artiklov samodejno preskočenih',
+    reviewFound: 'najdenih — preglejte in potrdite',
+    createNew: '➕ Ustvari nov artikel v zalogi',
+    include: 'Vključi', skippedBtn: 'Preskočeno', autoSkipBtn: '🧠 Sam. preskok',
+    uploading: 'Nalagam račun…', processing: 'Berem račun z AI…',
+    processingNote: 'To lahko traja 10–30 sekund',
+    doneTitle: 'Končano!', doneUpdated: 'posodobljenih v zalogi',
+    learnedNote: 'za naslednjič', remembered: 'Zapomnil sem si',
+    backToInventory: 'Nazaj na zalogo', unknownSupplier: 'Neznan dobavitelj',
+    confirmBtn: 'Potrdi',
+    quickAdd: 'Hitro dodaj', currentLabel: 'Trenutno', newLabel: 'Novo', changeLabel: 'Sprememba',
+    adjustTitle: 'Prilagodi zalogo', adjustManual: 'Ročna sprememba (+ ali -)', adjustReason: 'Razlog',
+    itemName: 'Ime artikla *', itemPrice: 'Cena (€) *', itemDesc: 'Opis',
+    itemCategory: 'Kategorija', itemAvailable: 'Dostopno', itemPopular: 'Priljubljeno',
+    itemIngredients: 'Sestavine', itemIngredientsNote: '(samodejni odbitek zaloge)',
+    addIngredient: '+ Dodaj sestavino…',
+  },
+} as const;
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
 
@@ -1864,6 +1969,7 @@ function BillUpload({
   inventoryItems: InventoryItem[];
   onDone: () => void;
 }) {
+  const t = useT();
   const [stage, setStage]     = useState<'idle' | 'uploading' | 'processing' | 'review' | 'saving' | 'done'>('idle');
   const [error,   setError]   = useState('');
   const [bill,    setBill]    = useState<ExtractedBill | null>(null);
@@ -1997,18 +2103,18 @@ function BillUpload({
       <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
         <CheckCircle2 size={32} className="text-green-500" />
       </div>
-      <p className="text-xl font-black text-gray-900 mb-1">Done!</p>
+      <p className="text-xl font-black text-gray-900 mb-1">{t.doneTitle}</p>
       <p className="text-gray-400 text-sm">
-        {saved} item{saved !== 1 ? 's' : ''} updated in inventory
+        {saved} {t.doneUpdated}
       </p>
       {learned > 0 && (
         <p className="text-xs text-blue-500 font-medium mt-1">
-          🧠 Remembered {learned} item{learned !== 1 ? 's' : ''} to skip next time
+          🧠 {t.remembered} {learned} {t.learnedNote}
         </p>
       )}
       <button onClick={onDone}
         className="mt-6 bg-orange-500 hover:bg-orange-600 text-white font-black px-6 py-3 rounded-2xl transition-all active:scale-[0.97]">
-        Back to Inventory
+        {t.backToInventory}
       </button>
     </div>
   );
@@ -2020,7 +2126,7 @@ function BillUpload({
       <div>
         {/* Bill summary */}
         <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 mb-4">
-          <p className="font-black text-gray-900 text-sm mb-1.5">Bill extracted ✓</p>
+          <p className="font-black text-gray-900 text-sm mb-1.5">{t.billExtracted}</p>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
             {bill.supplier      && <span>📦 {bill.supplier}</span>}
             {bill.date          && <span>📅 {bill.date}</span>}
@@ -2033,13 +2139,13 @@ function BillUpload({
           <div className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-2.5 mb-3 flex items-center gap-2">
             <span className="text-sm">🧠</span>
             <p className="text-xs text-blue-700 font-medium">
-              {autoSkippedCount} item{autoSkippedCount !== 1 ? 's' : ''} auto-skipped from your remembered list
+              {autoSkippedCount} {t.autoSkippedBanner}
             </p>
           </div>
         )}
 
         <p className="text-xs font-black text-gray-500 uppercase tracking-widest mb-3">
-          {review.length} item{review.length !== 1 ? 's' : ''} found — review & confirm
+          {review.length} {t.reviewFound}
         </p>
 
         <div className="space-y-2.5 mb-6">
@@ -2073,7 +2179,7 @@ function BillUpload({
                     className={`flex-shrink-0 text-xs font-black px-2.5 py-1 rounded-full transition-all ${
                       item.action === 'skip' ? 'bg-gray-100 text-gray-400' : 'bg-orange-100 text-orange-600'
                     }`}>
-                    {item.action === 'skip' ? (item.autoSkipped ? '🧠 Auto-skip' : 'Skipped') : 'Include'}
+                    {item.action === 'skip' ? (item.autoSkipped ? t.autoSkipBtn : t.skippedBtn) : t.include}
                   </button>
                 </div>
 
@@ -2097,7 +2203,7 @@ function BillUpload({
                         }}
                         className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-orange-400 appearance-none"
                       >
-                        <option value="">➕ Create new inventory item</option>
+                        <option value="">{t.createNew}</option>
                         {inventoryItems.map(inv => (
                           <option key={inv.id} value={inv.id}>{inv.name} ({inv.unit})</option>
                         ))}
@@ -2154,13 +2260,13 @@ function BillUpload({
         <div className="flex gap-3">
           <button onClick={() => setStage('idle')}
             className="flex-1 border-2 border-gray-200 text-gray-600 font-black py-3 rounded-2xl transition-all">
-            Cancel
+            {t.cancel}
           </button>
           <button
             onClick={handleConfirm}
             disabled={review.every(i => i.action === 'skip')}
             className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-black py-3 rounded-2xl transition-all active:scale-[0.97]">
-            Confirm {review.filter(i => i.action === 'add_stock').length} Items
+            {t.confirmBtn} {review.filter(i => i.action === 'add_stock').length}
           </button>
         </div>
       </div>
@@ -2172,9 +2278,9 @@ function BillUpload({
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4" />
       <p className="font-black text-gray-900">
-        {stage === 'uploading' ? 'Uploading bill…' : stage === 'processing' ? 'Reading bill with AI…' : 'Saving to inventory…'}
+        {stage === 'uploading' ? t.uploading : stage === 'processing' ? t.processing : t.saving}
       </p>
-      {stage === 'processing' && <p className="text-xs text-gray-400 mt-1">This may take 10–30 seconds</p>}
+      {stage === 'processing' && <p className="text-xs text-gray-400 mt-1">{t.processingNote}</p>}
     </div>
   );
 
@@ -2187,9 +2293,9 @@ function BillUpload({
         <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mb-4">
           <Upload size={28} className="text-orange-500" />
         </div>
-        <p className="font-black text-gray-900 text-lg mb-1">Upload Supplier Bill</p>
-        <p className="text-gray-400 text-sm">Photo or scanned PDF of your delivery note</p>
-        <p className="text-xs text-gray-300 mt-2">JPG · PNG · WebP · PDF — max 10 MB</p>
+        <p className="font-black text-gray-900 text-lg mb-1">{t.uploadTitle}</p>
+        <p className="text-gray-400 text-sm">{t.uploadSub}</p>
+        <p className="text-xs text-gray-300 mt-2">{t.uploadFormats}</p>
       </div>
       <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden"
         onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
@@ -2204,7 +2310,7 @@ function BillUpload({
         <div className="mt-4 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-2.5 flex items-center gap-2">
           <span className="text-sm">🧠</span>
           <p className="text-xs text-blue-700 font-medium">
-            {skipList.size} item{skipList.size !== 1 ? 's' : ''} will be auto-skipped from your remembered list
+            {skipList.size} {t.autoSkippedNote}
           </p>
         </div>
       )}
@@ -2212,7 +2318,7 @@ function BillUpload({
       {/* Bill history */}
       {history.length > 0 && (
         <div className="mt-5">
-          <p className="font-black text-gray-700 text-sm mb-2.5">Recent Bills</p>
+          <p className="font-black text-gray-700 text-sm mb-2.5">{t.recentBills}</p>
           <div className="space-y-2">
             {history.map(h => (
               <div key={h.id} className="bg-white rounded-2xl border border-gray-100 p-3 flex items-center gap-3">
@@ -2221,10 +2327,10 @@ function BillUpload({
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-black text-gray-900 truncate">
-                    {h.supplier ?? 'Unknown supplier'}
+                    {h.supplier ?? t.unknownSupplier}
                   </p>
                   <p className="text-xs text-gray-400">
-                    {h.itemsProcessed} added · {h.itemsSkipped} skipped · {timeAgo(h.timestamp)}
+                    {h.itemsProcessed} {t.billAdded} · {h.itemsSkipped} {t.billSkipped} · {timeAgo(h.timestamp)}
                   </p>
                 </div>
                 {h.total != null && (
@@ -2237,12 +2343,12 @@ function BillUpload({
       )}
 
       <div className="mt-5 bg-gray-50 rounded-2xl p-4">
-        <p className="font-black text-gray-700 text-sm mb-2">How it works</p>
+        <p className="font-black text-gray-700 text-sm mb-2">{t.howItWorks}</p>
         <ol className="space-y-1.5 text-xs text-gray-500">
-          <li>1. Upload a photo or PDF of your supplier delivery note</li>
-          <li>2. AI reads every item and quantity automatically</li>
-          <li>3. Review — skip anything you don't want to track</li>
-          <li>4. Confirm to add stock to your inventory in one tap</li>
+          <li>{t.hw1}</li>
+          <li>{t.hw2}</li>
+          <li>{t.hw3}</li>
+          <li>{t.hw4}</li>
         </ol>
       </div>
     </div>
@@ -2256,6 +2362,7 @@ function BulkMinSetup({ restaurantId, items, onClose }: {
   items: InventoryItem[];
   onClose: () => void;
 }) {
+  const t = useT();
   const zeroItems = items.filter(i => i.minStock === 0);
   const [mins, setMins] = useState<Record<string, string>>(() =>
     Object.fromEntries(zeroItems.map(i => [i.id, '']))
@@ -2288,8 +2395,8 @@ function BulkMinSetup({ restaurantId, items, onClose }: {
       >
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-black text-gray-900">Set Minimum Stock</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{zeroItems.length} items with no minimum set</p>
+            <h2 className="text-lg font-black text-gray-900">{t.bulkMinTitle}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{zeroItems.length} {t.bulkMinSubtitle}</p>
           </div>
           <button onClick={onClose} className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
             <X size={18} className="text-gray-500" />
@@ -2297,15 +2404,13 @@ function BulkMinSetup({ restaurantId, items, onClose }: {
         </div>
 
         <div className="overflow-y-auto flex-1 px-5 py-3">
-          <p className="text-xs text-gray-400 mb-3">
-            Leave blank to skip. The system alerts you when stock falls below this level.
-          </p>
+          <p className="text-xs text-gray-400 mb-3">{t.bulkMinNote}</p>
           <div className="space-y-2">
             {zeroItems.map(item => (
               <div key={item.id} className="flex items-center gap-3 bg-gray-50 rounded-2xl px-4 py-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-black text-gray-900 truncate">{item.name}</p>
-                  <p className="text-xs text-gray-400">{item.category} · {item.currentStock} {item.unit} in stock</p>
+                  <p className="text-xs text-gray-400">{item.category} · {item.currentStock} {item.unit} {t.inStock}</p>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <input
@@ -2329,7 +2434,7 @@ function BulkMinSetup({ restaurantId, items, onClose }: {
             onClick={handleSave}
             disabled={saving}
             className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-black py-4 rounded-2xl transition-all active:scale-[0.97]">
-            {saving ? 'Saving…' : 'Save Minimums'}
+            {saving ? t.saving : t.bulkMinSave}
           </button>
         </div>
       </motion.div>
@@ -2340,6 +2445,7 @@ function BulkMinSetup({ restaurantId, items, onClose }: {
 // ── Main Inventory Component ──────────────────────────────────────────────────
 
 function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
+  const t = useT();
   const [items, setItems]           = useState<InventoryItem[]>([]);
   const [loading, setLoading]       = useState(true);
   const [tab, setTab]               = useState<'items' | 'upload'>('items');
@@ -2420,13 +2526,13 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-black text-gray-900">Inventory</h1>
+        <h1 className="text-xl font-black text-gray-900">{t.inventory}</h1>
         <div className="flex items-center gap-2">
           {tab === 'items' && (
             <button onClick={() => setShowAdd(true)}
               className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white font-black px-4 py-2.5 rounded-2xl text-sm transition-all active:scale-[0.97]">
               <Plus size={16} />
-              Add Item
+              {t.addItem}
             </button>
           )}
         </div>
@@ -2439,14 +2545,14 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
           className={`flex-1 py-2 rounded-xl text-sm font-black transition-all ${
             tab === 'items' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'
           }`}>
-          📦 Items
+          {t.tabItems}
         </button>
         <button
           onClick={() => setTab('upload')}
           className={`flex-1 py-2 rounded-xl text-sm font-black transition-all ${
             tab === 'upload' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400'
           }`}>
-          🤖 Scan Bill
+          {t.tabScanBill}
         </button>
       </div>
 
@@ -2465,15 +2571,15 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm text-center">
           <p className="text-2xl font-black text-gray-900">{items.length}</p>
-          <p className="text-xs text-gray-400 font-medium mt-0.5">Total Items</p>
+          <p className="text-xs text-gray-400 font-medium mt-0.5">{t.totalItems}</p>
         </div>
         <div className={`rounded-2xl p-3 border shadow-sm text-center ${lowCount > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-100'}`}>
           <p className={`text-2xl font-black ${lowCount > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{lowCount}</p>
-          <p className={`text-xs font-medium mt-0.5 ${lowCount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>Low Stock</p>
+          <p className={`text-xs font-medium mt-0.5 ${lowCount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>{t.lowStock}</p>
         </div>
         <div className={`rounded-2xl p-3 border shadow-sm text-center ${outCount > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'}`}>
           <p className={`text-2xl font-black ${outCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>{outCount}</p>
-          <p className={`text-xs font-medium mt-0.5 ${outCount > 0 ? 'text-red-400' : 'text-gray-400'}`}>Out of Stock</p>
+          <p className={`text-xs font-medium mt-0.5 ${outCount > 0 ? 'text-red-400' : 'text-gray-400'}`}>{t.outOfStock}</p>
         </div>
       </div>
 
@@ -2484,9 +2590,9 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
           <AlertTriangle size={16} className="text-amber-500 flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-black text-amber-800">
-              {items.filter(i => i.minStock === 0).length} items have no minimum stock set
+              {items.filter(i => i.minStock === 0).length} {t.bulkMinBannerTitle}
             </p>
-            <p className="text-xs text-amber-600">Tap to set minimums so low-stock alerts work correctly</p>
+            <p className="text-xs text-amber-600">{t.bulkMinBannerSub}</p>
           </div>
           <ChevronDown size={14} className="text-amber-400 flex-shrink-0 -rotate-90" />
         </button>
@@ -2500,7 +2606,7 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search items, categories, suppliers…"
+          placeholder={t.searchPlaceholder}
           className="w-full bg-white border border-gray-200 rounded-2xl pl-10 pr-4 py-2.5 text-sm text-gray-900 outline-none focus:border-orange-400 transition-colors"
         />
         {search && (
@@ -2517,7 +2623,7 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
             className={`px-4 py-2 rounded-full text-sm font-black transition-all ${
               filter === f ? 'bg-orange-500 text-white shadow-sm' : 'bg-gray-100 text-gray-500'
             }`}>
-            {f === 'all' ? 'All' : f === 'low' ? `Low${lowCount > 0 ? ` (${lowCount})` : ''}` : `Out${outCount > 0 ? ` (${outCount})` : ''}`}
+            {f === 'all' ? t.filterAll : f === 'low' ? `${t.filterLow}${lowCount > 0 ? ` (${lowCount})` : ''}` : `${t.filterOut}${outCount > 0 ? ` (${outCount})` : ''}`}
           </button>
         ))}
         {search && (
@@ -2530,11 +2636,11 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
         <div className="text-center py-16">
           <Boxes size={48} className="mx-auto text-gray-200 mb-3" />
           <p className="font-black text-gray-400">
-            {search ? `No items matching "${search}"` : filter === 'all' ? 'No inventory items yet' : `No ${filter === 'low' ? 'low stock' : 'out of stock'} items`}
+            {search ? `${t.noMatchSearch} "${search}"` : filter === 'all' ? t.noItemsYet : `${filter === 'low' ? t.statusLow : t.statusOut}`}
           </p>
           {!search && filter === 'all' && (
             <button onClick={() => setShowAdd(true)} className="mt-4 text-orange-500 font-black text-sm">
-              + Add your first item
+              {t.addFirstItem}
             </button>
           )}
         </div>
@@ -2560,12 +2666,12 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   {catOut > 0 && (
                     <span className="text-[10px] font-black bg-red-50 text-red-600 px-2 py-0.5 rounded-full">
-                      {catOut} out
+                      {catOut} {t.catOut}
                     </span>
                   )}
                   {catLow > 0 && (
                     <span className="text-[10px] font-black bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">
-                      {catLow} low
+                      {catLow} {t.catLow}
                     </span>
                   )}
                   <span className="text-[10px] text-gray-400 font-medium">{catItems.length} item{catItems.length !== 1 ? 's' : ''}</span>
@@ -2625,12 +2731,12 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
                                   status === 'out' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
                                 }`}>
                                   <AlertTriangle size={8} />
-                                  {status === 'out' ? 'Out of stock' : 'Low stock'}
+                                  {status === 'out' ? t.statusOut : t.statusLow}
                                 </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-green-50 text-green-600">
                                   <CheckCircle2 size={8} />
-                                  In stock
+                                  {t.statusInStock}
                                 </span>
                               )}
                               <span className="text-[10px] text-gray-400 ml-auto">{timeAgo(item.lastUpdated)}</span>
@@ -2656,16 +2762,16 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
             <motion.div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl"
               initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
             >
-              <h3 className="text-lg font-black text-gray-900 mb-2">Delete Item?</h3>
-              <p className="text-sm text-gray-500 mb-5">This will permanently remove the item from your inventory.</p>
+              <h3 className="text-lg font-black text-gray-900 mb-2">{t.deleteItemTitle}</h3>
+              <p className="text-sm text-gray-500 mb-5">{t.deleteItemMsg}</p>
               <div className="flex gap-3">
                 <button onClick={() => setDeleteId(null)}
                   className="flex-1 border-2 border-gray-200 text-gray-700 font-black py-3 rounded-2xl">
-                  Cancel
+                  {t.cancel}
                 </button>
                 <button onClick={() => handleDelete(deleteId)}
                   className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black py-3 rounded-2xl transition-all">
-                  Delete
+                  {t.delete}
                 </button>
               </div>
             </motion.div>
@@ -2715,6 +2821,15 @@ function AdminShell() {
   const [restaurant, loading] = useRestaurantForUser();
   const location = useLocation();
   const processingOrders = useRef(new Set<string>());
+  const [lang, setLang] = useState<AdminLang>(() =>
+    (localStorage.getItem('admin.lang') as AdminLang) ?? 'en'
+  );
+  function toggleLang() {
+    const next: AdminLang = lang === 'en' ? 'sl' : 'en';
+    localStorage.setItem('admin.lang', next);
+    setLang(next);
+  }
+  const t = adminT[lang];
 
   // ── Auto stock deduction ──────────────────────────────────────────────────
   // Runs in the background: whenever an order reaches "preparing" status and
@@ -2823,16 +2938,19 @@ function AdminShell() {
           )}
           <span className="font-bold text-gray-900">{restaurant.name}</span>
         </div>
-        <button
-          onClick={handleLogout}
-          aria-label="Sign out"
-          className="p-2 text-gray-400 hover:text-gray-700"
-        >
-          <LogOut size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={toggleLang}
+            className="text-xs font-black px-2.5 py-1.5 rounded-full border border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-500 transition-colors">
+            {lang === 'en' ? '🇸🇮 SLO' : '🇬🇧 ENG'}
+          </button>
+          <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-gray-400 hover:text-gray-700">
+            <LogOut size={18} />
+          </button>
+        </div>
       </div>
 
       {/* Content */}
+      <AdminLangCtx.Provider value={lang}>
       <div className="flex-1 overflow-y-auto p-4 pb-24 max-w-2xl mx-auto w-full">
         <Routes>
           <Route index element={<Dashboard restaurant={restaurant} />} />
@@ -2847,22 +2965,26 @@ function AdminShell() {
 
       {/* Bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex justify-around px-2 py-2 z-10">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.path}
-            to={`/admin/${item.path}`}
-            end={item.path === ''}
-            className={({ isActive }) =>
-              `flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-colors ${
-                isActive ? 'text-orange-500' : 'text-gray-400'
-              }`
-            }
-          >
-            <item.icon size={20} />
-            <span className="text-xs font-medium">{item.label}</span>
-          </NavLink>
-        ))}
+        {NAV.map((item) => {
+          const label = item.path === ''        ? t.navDashboard
+                      : item.path === 'menu'     ? t.navMenu
+                      : item.path === 'inventory'? t.navInventory
+                      : item.path === 'orders'   ? t.navOrders
+                      : item.path === 'analytics'? t.navAnalytics
+                      : item.path === 'qr'       ? t.navQR
+                      : t.navSettings;
+          return (
+            <NavLink key={item.path} to={`/admin/${item.path}`} end={item.path === ''}
+              className={({ isActive }) =>
+                `flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-colors ${isActive ? 'text-orange-500' : 'text-gray-400'}`
+              }>
+              <item.icon size={20} />
+              <span className="text-xs font-medium">{label}</span>
+            </NavLink>
+          );
+        })}
       </div>
+      </AdminLangCtx.Provider>
     </div>
   );
 }
