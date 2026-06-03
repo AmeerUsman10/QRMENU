@@ -34,6 +34,8 @@ export const refs = {
   restaurantCounter: (restaurantId: string) => ref(db, `restaurant_counters/${restaurantId}`),
   inventoryItems: (restaurantId: string) => ref(db, `inventory/${restaurantId}/items`),
   inventoryItem: (restaurantId: string, itemId: string) => ref(db, `inventory/${restaurantId}/items/${itemId}`),
+  billSkipList: (restaurantId: string) => ref(db, `inventory/${restaurantId}/billSkipList`),
+  billHistory:  (restaurantId: string) => ref(db, `inventory/${restaurantId}/billHistory`),
 };
 
 export async function placeOrder(

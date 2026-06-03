@@ -1825,6 +1825,22 @@ interface ReviewItem extends ExtractedItem {
   newName: string;
   newUnit: string;
   newCategory: string;
+  autoSkipped: boolean; // true if auto-skipped from remembered skip list
+}
+
+interface BillHistoryEntry {
+  id: string;
+  timestamp: number;
+  supplier?: string | null;
+  date?: string | null;
+  invoiceNumber?: string | null;
+  total?: number | null;
+  itemsProcessed: number;
+  itemsSkipped: number;
+}
+
+function normalizeSkipKey(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
 function findBestMatch(name: string, items: InventoryItem[]): InventoryItem | null {
@@ -1848,57 +1864,69 @@ function BillUpload({
   inventoryItems: InventoryItem[];
   onDone: () => void;
 }) {
-  const [stage, setStage] = useState<'idle' | 'uploading' | 'processing' | 'review' | 'saving' | 'done'>('idle');
-  const [error,   setError]       = useState('');
-  const [bill,    setBill]        = useState<ExtractedBill | null>(null);
-  const [review,  setReview]      = useState<ReviewItem[]>([]);
-  const [saved,   setSaved]       = useState(0);
+  const [stage, setStage]     = useState<'idle' | 'uploading' | 'processing' | 'review' | 'saving' | 'done'>('idle');
+  const [error,   setError]   = useState('');
+  const [bill,    setBill]    = useState<ExtractedBill | null>(null);
+  const [review,  setReview]  = useState<ReviewItem[]>([]);
+  const [saved,   setSaved]   = useState(0);
+  const [learned, setLearned] = useState(0);
+  const [skipList, setSkipList] = useState<Set<string>>(new Set());
+  const [history,  setHistory]  = useState<BillHistoryEntry[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Load skip list + bill history on mount
+  useEffect(() => {
+    const u1 = onValue(refs.billSkipList(restaurant.id), snap => {
+      setSkipList(snap.exists() ? new Set(Object.keys(snap.val() as Record<string, boolean>)) : new Set());
+    }, () => setSkipList(new Set()));
+    const u2 = onValue(refs.billHistory(restaurant.id), snap => {
+      if (snap.exists()) {
+        const arr = Object.entries(snap.val() as Record<string, Omit<BillHistoryEntry, 'id'>>)
+          .map(([id, v]) => ({ ...v, id }))
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, 8);
+        setHistory(arr);
+      } else {
+        setHistory([]);
+      }
+    }, () => setHistory([]));
+    return () => { u1(); u2(); };
+  }, [restaurant.id]);
 
   async function handleFile(file: File) {
     setError('');
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
-    if (!allowed.includes(file.type)) {
-      setError('Please upload a JPG, PNG, WebP, or PDF file.');
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setError('File is too large. Maximum size is 10 MB.');
-      return;
-    }
+    if (!allowed.includes(file.type)) { setError('Please upload a JPG, PNG, WebP, or PDF file.'); return; }
+    if (file.size > 10 * 1024 * 1024) { setError('File is too large. Maximum size is 10 MB.'); return; }
 
     try {
-      // 1. Upload to Firebase Storage
       setStage('uploading');
       const path = `bills/${restaurant.id}/${Date.now()}_${file.name}`;
       await uploadBytes(storageRef(storage, path), file);
 
-      // 2. Call Cloud Function
       setStage('processing');
-      const fn = httpsCallable<{ storagePath: string; mimeType: string }, ExtractedBill>(
-        firebaseFunctions, 'extractBillItems',
-      );
+      const fn = httpsCallable<{ storagePath: string; mimeType: string }, ExtractedBill>(firebaseFunctions, 'extractBillItems');
       const { data } = await fn({ storagePath: path, mimeType: file.type });
       setBill(data);
 
-      // 3. Build review list with fuzzy matching to existing inventory
       const items: ReviewItem[] = (data.items ?? []).map(item => {
-        const match = findBestMatch(item.name, inventoryItems);
+        const match       = findBestMatch(item.name, inventoryItems);
+        const autoSkipped = skipList.has(normalizeSkipKey(item.name));
         return {
           ...item,
-          matchedId:   match?.id   ?? null,
-          action:      'add_stock',
+          matchedId:   match?.id       ?? null,
+          action:      autoSkipped ? 'skip' : 'add_stock',
           newName:     item.name,
           newUnit:     match?.unit     ?? item.unit     ?? 'pcs',
           newCategory: match?.category ?? INV_CATEGORIES[0],
+          autoSkipped,
         };
       });
       setReview(items);
       setStage('review');
     } catch (err: unknown) {
-      const firebaseErr = err as { code?: string; message?: string };
-      const msg = firebaseErr.message ?? (err instanceof Error ? err.message : 'Something went wrong. Please try again.');
-      setError(msg);
+      const e = err as { message?: string };
+      setError(e.message ?? 'Something went wrong. Please try again.');
       setStage('idle');
     }
   }
@@ -1906,8 +1934,15 @@ function BillUpload({
   async function handleConfirm() {
     setStage('saving');
     let count = 0;
+    const toLearn:   string[] = []; // newly skipped (not auto) → save to skip list
+    const toUnlearn: string[] = []; // auto-skipped but user included → remove from skip list
+
     for (const item of review) {
-      if (item.action === 'skip') continue;
+      if (item.action === 'skip') {
+        if (!item.autoSkipped) toLearn.push(normalizeSkipKey(item.name));
+        continue;
+      }
+      if (item.autoSkipped) toUnlearn.push(normalizeSkipKey(item.name));
       try {
         if (item.matchedId) {
           const existing = inventoryItems.find(i => i.id === item.matchedId)!;
@@ -1927,122 +1962,176 @@ function BillUpload({
           });
         }
         count++;
-      } catch { /* skip failed lines silently */ }
+      } catch { /* skip silently */ }
     }
+
+    // Update skip list
+    if (toLearn.length > 0 || toUnlearn.length > 0) {
+      const updates: Record<string, boolean | null> = {};
+      toLearn.forEach(k   => { updates[k] = true; });
+      toUnlearn.forEach(k => { updates[k] = null; });
+      try { await update(refs.billSkipList(restaurant.id), updates); } catch {}
+    }
+
+    // Save to bill history
+    try {
+      await push(refs.billHistory(restaurant.id), {
+        timestamp:      Date.now(),
+        supplier:       bill?.supplier      ?? null,
+        date:           bill?.date          ?? null,
+        invoiceNumber:  bill?.invoiceNumber ?? null,
+        total:          bill?.total         ?? null,
+        itemsProcessed: count,
+        itemsSkipped:   review.filter(i => i.action === 'skip').length,
+      });
+    } catch {}
+
+    setLearned(toLearn.length);
     setSaved(count);
     setStage('done');
   }
 
   /* ── Done ── */
   if (stage === 'done') return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
+    <div className="flex flex-col items-center justify-center py-14 text-center">
       <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
         <CheckCircle2 size={32} className="text-green-500" />
       </div>
       <p className="text-xl font-black text-gray-900 mb-1">Done!</p>
-      <p className="text-gray-400 text-sm mb-6">
+      <p className="text-gray-400 text-sm">
         {saved} item{saved !== 1 ? 's' : ''} updated in inventory
       </p>
+      {learned > 0 && (
+        <p className="text-xs text-blue-500 font-medium mt-1">
+          🧠 Remembered {learned} item{learned !== 1 ? 's' : ''} to skip next time
+        </p>
+      )}
       <button onClick={onDone}
-        className="bg-orange-500 hover:bg-orange-600 text-white font-black px-6 py-3 rounded-2xl transition-all active:scale-[0.97]">
+        className="mt-6 bg-orange-500 hover:bg-orange-600 text-white font-black px-6 py-3 rounded-2xl transition-all active:scale-[0.97]">
         Back to Inventory
       </button>
     </div>
   );
 
   /* ── Review ── */
-  if (stage === 'review' && bill) return (
-    <div>
-      {/* Bill summary chip */}
-      <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 mb-4">
-        <p className="font-black text-gray-900 text-sm mb-1.5">Bill extracted ✓</p>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-          {bill.supplier       && <span>📦 {bill.supplier}</span>}
-          {bill.date           && <span>📅 {bill.date}</span>}
-          {bill.invoiceNumber  && <span>#️⃣ {bill.invoiceNumber}</span>}
-          {bill.total   != null && <span>💶 €{Number(bill.total).toFixed(2)}</span>}
+  if (stage === 'review' && bill) {
+    const autoSkippedCount = review.filter(i => i.autoSkipped && i.action === 'skip').length;
+    return (
+      <div>
+        {/* Bill summary */}
+        <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 mb-4">
+          <p className="font-black text-gray-900 text-sm mb-1.5">Bill extracted ✓</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+            {bill.supplier      && <span>📦 {bill.supplier}</span>}
+            {bill.date          && <span>📅 {bill.date}</span>}
+            {bill.invoiceNumber && <span>#️⃣ {bill.invoiceNumber}</span>}
+            {bill.total != null && <span>💶 €{Number(bill.total).toFixed(2)}</span>}
+          </div>
         </div>
-      </div>
 
-      <p className="text-xs font-black text-gray-500 uppercase tracking-widest mb-3">
-        {review.length} item{review.length !== 1 ? 's' : ''} found — review & confirm
-      </p>
+        {autoSkippedCount > 0 && (
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-2.5 mb-3 flex items-center gap-2">
+            <span className="text-sm">🧠</span>
+            <p className="text-xs text-blue-700 font-medium">
+              {autoSkippedCount} item{autoSkippedCount !== 1 ? 's' : ''} auto-skipped from your remembered list
+            </p>
+          </div>
+        )}
 
-      <div className="space-y-2.5 mb-6">
-        {review.map((item, idx) => {
-          const existing = item.matchedId
-            ? inventoryItems.find(i => i.id === item.matchedId)
-            : null;
-          return (
-            <div key={idx}
-              className={`bg-white rounded-2xl border p-3.5 transition-opacity ${
+        <p className="text-xs font-black text-gray-500 uppercase tracking-widest mb-3">
+          {review.length} item{review.length !== 1 ? 's' : ''} found — review & confirm
+        </p>
+
+        <div className="space-y-2.5 mb-6">
+          {review.map((item, idx) => {
+            const existing = item.matchedId ? inventoryItems.find(i => i.id === item.matchedId) : null;
+            return (
+              <div key={idx} className={`bg-white rounded-2xl border p-3.5 transition-opacity ${
                 item.action === 'skip' ? 'opacity-40 border-gray-100' : 'border-gray-200'
               }`}>
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex-1 min-w-0">
-                  <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    +{item.quantity} {item.unit}
-                    {item.unitPrice != null && ` · €${Number(item.unitPrice).toFixed(2)}/${item.unit}`}
-                  </p>
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-black text-gray-900 text-sm truncate">{item.name}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      +{item.quantity} {item.unit}
+                      {item.unitPrice != null && ` · €${Number(item.unitPrice).toFixed(2)}/${item.unit}`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setReview(prev => prev.map((r, i) =>
+                      i === idx ? { ...r, action: r.action === 'skip' ? 'add_stock' : 'skip' } : r
+                    ))}
+                    className={`flex-shrink-0 text-xs font-black px-2.5 py-1 rounded-full transition-all ${
+                      item.action === 'skip' ? 'bg-gray-100 text-gray-400' : 'bg-orange-100 text-orange-600'
+                    }`}>
+                    {item.action === 'skip' ? (item.autoSkipped ? '🧠 Auto-skip' : 'Skipped') : 'Include'}
+                  </button>
                 </div>
-                <button
-                  onClick={() =>
-                    setReview(prev =>
-                      prev.map((r, i) =>
-                        i === idx ? { ...r, action: r.action === 'skip' ? 'add_stock' : 'skip' } : r,
-                      ),
-                    )
-                  }
-                  className={`flex-shrink-0 text-xs font-black px-2.5 py-1 rounded-full transition-all ${
-                    item.action === 'skip'
-                      ? 'bg-gray-100 text-gray-400'
-                      : 'bg-orange-100 text-orange-600'
-                  }`}>
-                  {item.action === 'skip' ? 'Skipped' : 'Include'}
-                </button>
+
+                {/* Manual link dropdown — only when including */}
+                {item.action === 'add_stock' && (
+                  <div className="space-y-1.5">
+                    <div className="relative">
+                      <select
+                        value={item.matchedId ?? ''}
+                        onChange={e => {
+                          const newId = e.target.value || null;
+                          const inv   = newId ? inventoryItems.find(i => i.id === newId) : null;
+                          setReview(prev => prev.map((r, i) =>
+                            i === idx ? {
+                              ...r,
+                              matchedId: newId,
+                              newUnit:   inv?.unit     ?? r.newUnit,
+                              newCategory: inv?.category ?? r.newCategory,
+                            } : r
+                          ));
+                        }}
+                        className="w-full text-xs border border-gray-200 rounded-xl px-3 py-2 bg-white outline-none focus:border-orange-400 appearance-none"
+                      >
+                        <option value="">➕ Create new inventory item</option>
+                        {inventoryItems.map(inv => (
+                          <option key={inv.id} value={inv.id}>{inv.name} ({inv.unit})</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                    <div className={`text-xs rounded-xl px-3 py-2 ${existing ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                      {existing
+                        ? `→ "${existing.name}": ${existing.currentStock} + ${item.quantity} = ${existing.currentStock + item.quantity} ${existing.unit}`
+                        : `→ New item will be created: "${item.newName}"`}
+                    </div>
+                  </div>
+                )}
               </div>
-              {item.action === 'add_stock' && (
-                <div className={`text-xs rounded-xl px-3 py-2 ${
-                  existing ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
-                }`}>
-                  {existing
-                    ? `→ "${existing.name}": ${existing.currentStock} + ${item.quantity} = ${existing.currentStock + item.quantity} ${existing.unit}`
-                    : `→ New item will be created: "${item.newName}"`}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
 
-      <div className="flex gap-3">
-        <button onClick={() => setStage('idle')}
-          className="flex-1 border-2 border-gray-200 text-gray-600 font-black py-3 rounded-2xl transition-all">
-          Cancel
-        </button>
-        <button
-          onClick={handleConfirm}
-          disabled={review.every(i => i.action === 'skip')}
-          className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-black py-3 rounded-2xl transition-all active:scale-[0.97]">
-          Confirm {review.filter(i => i.action === 'add_stock').length} Items
-        </button>
+        <div className="flex gap-3">
+          <button onClick={() => setStage('idle')}
+            className="flex-1 border-2 border-gray-200 text-gray-600 font-black py-3 rounded-2xl transition-all">
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={review.every(i => i.action === 'skip')}
+            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white font-black py-3 rounded-2xl transition-all active:scale-[0.97]">
+            Confirm {review.filter(i => i.action === 'add_stock').length} Items
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  /* ── Loading states ── */
+  /* ── Loading ── */
   if (stage === 'uploading' || stage === 'processing' || stage === 'saving') return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4" />
       <p className="font-black text-gray-900">
-        {stage === 'uploading' ? 'Uploading bill…'
-          : stage === 'processing' ? 'Reading bill with AI…'
-          : 'Saving to inventory…'}
+        {stage === 'uploading' ? 'Uploading bill…' : stage === 'processing' ? 'Reading bill with AI…' : 'Saving to inventory…'}
       </p>
-      {stage === 'processing' && (
-        <p className="text-xs text-gray-400 mt-1">This may take 10–30 seconds</p>
-      )}
+      {stage === 'processing' && <p className="text-xs text-gray-400 mt-1">This may take 10–30 seconds</p>}
     </div>
   );
 
@@ -2059,19 +2148,52 @@ function BillUpload({
         <p className="text-gray-400 text-sm">Photo or scanned PDF of your delivery note</p>
         <p className="text-xs text-gray-300 mt-2">JPG · PNG · WebP · PDF — max 10 MB</p>
       </div>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp,application/pdf"
-        className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
-      />
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+
       {error && (
         <div className="mt-4 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-sm text-red-600 font-medium">
           {error}
         </div>
       )}
-      <div className="mt-6 bg-gray-50 rounded-2xl p-4">
+
+      {skipList.size > 0 && (
+        <div className="mt-4 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-2.5 flex items-center gap-2">
+          <span className="text-sm">🧠</span>
+          <p className="text-xs text-blue-700 font-medium">
+            {skipList.size} item{skipList.size !== 1 ? 's' : ''} will be auto-skipped from your remembered list
+          </p>
+        </div>
+      )}
+
+      {/* Bill history */}
+      {history.length > 0 && (
+        <div className="mt-5">
+          <p className="font-black text-gray-700 text-sm mb-2.5">Recent Bills</p>
+          <div className="space-y-2">
+            {history.map(h => (
+              <div key={h.id} className="bg-white rounded-2xl border border-gray-100 p-3 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-orange-50 flex items-center justify-center flex-shrink-0 text-base">
+                  🧾
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-gray-900 truncate">
+                    {h.supplier ?? 'Unknown supplier'}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {h.itemsProcessed} added · {h.itemsSkipped} skipped · {timeAgo(h.timestamp)}
+                  </p>
+                </div>
+                {h.total != null && (
+                  <span className="text-xs font-black text-gray-500 flex-shrink-0">€{Number(h.total).toFixed(2)}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5 bg-gray-50 rounded-2xl p-4">
         <p className="font-black text-gray-700 text-sm mb-2">How it works</p>
         <ol className="space-y-1.5 text-xs text-gray-500">
           <li>1. Upload a photo or PDF of your supplier delivery note</li>
