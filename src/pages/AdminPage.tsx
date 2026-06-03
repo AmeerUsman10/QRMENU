@@ -2056,6 +2056,14 @@ function BillUpload({
                     <p className="text-xs text-gray-400 mt-0.5">
                       +{item.quantity} {item.unit}
                       {item.unitPrice != null && ` · €${Number(item.unitPrice).toFixed(2)}/${item.unit}`}
+                      {(item.totalPrice != null || item.unitPrice != null) && (
+                        <span className="font-black text-gray-600">
+                          {' = €'}{(item.totalPrice != null
+                            ? Number(item.totalPrice)
+                            : item.quantity * Number(item.unitPrice)
+                          ).toFixed(2)}
+                        </span>
+                      )}
                     </p>
                   </div>
                   <button
