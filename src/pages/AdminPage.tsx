@@ -72,6 +72,10 @@ const adminT = {
     itemCategory: 'Category', itemAvailable: 'Available', itemPopular: 'Popular',
     itemIngredients: 'Ingredients', itemIngredientsNote: '(auto stock deduction)',
     addIngredient: '+ Add ingredient…',
+    stockValue: 'Stock Value', stockValueSub: 'tracked items',
+    reorderList: 'Reorder List', reorderEmpty: 'All stock levels are OK! 🎉',
+    reorderCopy: 'Copy List', reorderCopied: 'Copied! ✓', reorderClose: 'Close',
+    quickMinus: '−', quickPlus: '+',
   },
   sl: {
     navDashboard: 'Nadzorna plošča', navMenu: 'Meni', navInventory: 'Zaloga',
@@ -120,6 +124,10 @@ const adminT = {
     itemCategory: 'Kategorija', itemAvailable: 'Dostopno', itemPopular: 'Priljubljeno',
     itemIngredients: 'Sestavine', itemIngredientsNote: '(samodejni odbitek zaloge)',
     addIngredient: '+ Dodaj sestavino…',
+    stockValue: 'Vrednost zaloge', stockValueSub: 'sledenih artiklov',
+    reorderList: 'Seznam naročil', reorderEmpty: 'Vse zaloge so v redu! 🎉',
+    reorderCopy: 'Kopiraj seznam', reorderCopied: 'Kopirano! ✓', reorderClose: 'Zapri',
+    quickMinus: '−', quickPlus: '+',
   },
 } as const;
 
@@ -2457,6 +2465,8 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
   const [search, setSearch]           = useState('');
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [showMinSetup, setShowMinSetup] = useState(false);
+  const [showReorder, setShowReorder]     = useState(false);
+  const [reorderCopied, setReorderCopied] = useState(false);
 
   useEffect(() => {
     const unsub = onValue(refs.inventoryItems(restaurant.id), snap => {
@@ -2503,12 +2513,36 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
   }, {});
   const sortedCategories = Object.keys(grouped).sort();
 
+  // Stats extras
+  const trackedItems = items.filter(i => (i.unitPrice ?? 0) > 0);
+  const totalValue   = trackedItems.reduce((sum, i) => sum + i.unitPrice! * i.currentStock, 0);
+  const reorderItems = items.filter(i => getStockStatus(i) !== 'ok');
+
   function toggleCat(cat: string) {
     setCollapsedCats(prev => {
       const next = new Set(prev);
       if (next.has(cat)) next.delete(cat); else next.add(cat);
       return next;
     });
+  }
+
+  async function quickAdjust(item: InventoryItem, delta: number) {
+    const newStock = Math.max(0, item.currentStock + delta);
+    await update(refs.inventoryItem(restaurant.id, item.id), {
+      currentStock: newStock,
+      lastUpdated: Date.now(),
+    });
+  }
+
+  function copyReorderList() {
+    const lines = reorderItems.map(i => {
+      const st = getStockStatus(i);
+      return `${st === 'out' ? '❌' : '⚠️'} ${i.name} — ${i.currentStock} ${i.unit} (min: ${i.minStock} ${i.unit})`;
+    });
+    const text = `${t.reorderList}:\n${lines.join('\n')}`;
+    navigator.clipboard.writeText(text).catch(() => {});
+    setReorderCopied(true);
+    setTimeout(() => setReorderCopied(false), 2000);
   }
 
   async function handleDelete(id: string) {
@@ -2529,11 +2563,19 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
         <h1 className="text-xl font-black text-gray-900">{t.inventory}</h1>
         <div className="flex items-center gap-2">
           {tab === 'items' && (
-            <button onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white font-black px-4 py-2.5 rounded-2xl text-sm transition-all active:scale-[0.97]">
-              <Plus size={16} />
-              {t.addItem}
-            </button>
+            <div className="flex items-center gap-2">
+              {reorderItems.length > 0 && (
+                <button onClick={() => setShowReorder(true)}
+                  className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 font-black px-3 py-2.5 rounded-2xl text-sm transition-all active:scale-[0.97]">
+                  📋 {reorderItems.length}
+                </button>
+              )}
+              <button onClick={() => setShowAdd(true)}
+                className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white font-black px-4 py-2.5 rounded-2xl text-sm transition-all active:scale-[0.97]">
+                <Plus size={16} />
+                {t.addItem}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -2567,11 +2609,19 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
 
       {tab === 'items' && (<>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      {/* Stats row — 2×2 grid */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm text-center">
           <p className="text-2xl font-black text-gray-900">{items.length}</p>
           <p className="text-xs text-gray-400 font-medium mt-0.5">{t.totalItems}</p>
+        </div>
+        <div className={`rounded-2xl p-3 border shadow-sm text-center ${totalValue > 0 ? 'bg-purple-50 border-purple-100' : 'bg-white border-gray-100'}`}>
+          <p className={`text-2xl font-black ${totalValue > 0 ? 'text-purple-600' : 'text-gray-400'}`}>
+            {totalValue > 0 ? `€${totalValue.toFixed(0)}` : '—'}
+          </p>
+          <p className={`text-xs font-medium mt-0.5 ${totalValue > 0 ? 'text-purple-400' : 'text-gray-400'}`}>
+            {t.stockValue}
+          </p>
         </div>
         <div className={`rounded-2xl p-3 border shadow-sm text-center ${lowCount > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-100'}`}>
           <p className={`text-2xl font-black ${lowCount > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{lowCount}</p>
@@ -2711,10 +2761,20 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
                               </div>
                             </div>
                             <div className="flex items-center justify-between text-xs mt-1 mb-1.5">
-                              <span className={`font-black ${status === 'out' ? 'text-red-500' : status === 'low' ? 'text-amber-500' : 'text-green-600'}`}>
-                                {item.currentStock} {item.unit}
-                              </span>
-                              <span className="text-gray-400">min: {item.minStock} {item.unit}</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => quickAdjust(item, -1)}
+                                  className="w-5 h-5 rounded-full bg-red-50 text-red-500 font-black flex items-center justify-center hover:bg-red-100 transition-colors leading-none"
+                                  title="-1">−</button>
+                                <span className={`font-black ${status === 'out' ? 'text-red-500' : status === 'low' ? 'text-amber-500' : 'text-green-600'}`}>
+                                  {item.currentStock} {item.unit}
+                                </span>
+                                <button
+                                  onClick={() => quickAdjust(item, +1)}
+                                  className="w-5 h-5 rounded-full bg-green-50 text-green-600 font-black flex items-center justify-center hover:bg-green-100 transition-colors leading-none"
+                                  title="+1">+</button>
+                              </div>
+                              <span className="text-gray-400">{t.minLabel} {item.minStock} {item.unit}</span>
                             </div>
                             <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div className={`h-full rounded-full transition-all ${
@@ -2752,6 +2812,81 @@ function InventoryManager({ restaurant }: { restaurant: Restaurant }) {
           );
         })}
       </div>
+
+      {/* Reorder List modal */}
+      <AnimatePresence>
+        {showReorder && (
+          <motion.div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowReorder(false)}
+          >
+            <motion.div className="bg-white rounded-t-3xl max-h-[88vh] flex flex-col"
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 280 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-100">
+                <div>
+                  <h2 className="text-lg font-black text-gray-900">📋 {t.reorderList}</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">{reorderItems.length} items</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={copyReorderList}
+                    className={`text-xs font-black px-3 py-2 rounded-xl transition-all ${
+                      reorderCopied ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {reorderCopied ? t.reorderCopied : t.reorderCopy}
+                  </button>
+                  <button onClick={() => setShowReorder(false)}
+                    className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center">
+                    <X size={18} className="text-gray-500" />
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-y-auto flex-1 px-5 py-4">
+                {reorderItems.length === 0 ? (
+                  <p className="text-center text-gray-400 py-10">{t.reorderEmpty}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {reorderItems.map(item => {
+                      const st = getStockStatus(item);
+                      return (
+                        <div key={item.id} className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${
+                          st === 'out' ? 'bg-red-50 border border-red-100' : 'bg-amber-50 border border-amber-100'
+                        }`}>
+                          <span className="text-lg flex-shrink-0">{st === 'out' ? '❌' : '⚠️'}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-black text-gray-900 truncate">{item.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {item.currentStock} {item.unit} · min: {item.minStock} {item.unit}
+                            </p>
+                          </div>
+                          <div className="flex-shrink-0 text-right">
+                            <p className={`text-sm font-black ${st === 'out' ? 'text-red-600' : 'text-amber-600'}`}>
+                              {st === 'out' ? t.statusOut : t.statusLow}
+                            </p>
+                            {item.supplier && (
+                              <p className="text-[10px] text-gray-400 truncate max-w-[80px]">{item.supplier}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="px-5 py-4 border-t border-gray-100">
+                <button onClick={copyReorderList}
+                  className={`w-full font-black py-4 rounded-2xl transition-all active:scale-[0.97] ${
+                    reorderCopied ? 'bg-green-500 text-white' : 'bg-orange-500 hover:bg-orange-600 text-white'
+                  }`}>
+                  {reorderCopied ? t.reorderCopied : `📋 ${t.reorderCopy}`}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Delete confirm */}
       <AnimatePresence>
